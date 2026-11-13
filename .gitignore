@@ -39,3 +39,16 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local video storage
+/storage/uploads/*
+/storage/clips/*
+/storage/transcripts/*
+/storage/thumbs/*
+!/storage/uploads/.gitkeep
+!/storage/clips/.gitkeep
+
+# python venv
+.venv/
+
+

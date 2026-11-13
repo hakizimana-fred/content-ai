@@ -1,8 +1,30 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens. The whole app is styled with Tailwind's `zinc-*` scale; instead of rewriting
+ * every component we retune that scale to a deep navy so the entire UI picks up the
+ * "dark premium command-center" look (navy surfaces, cool-grey text, indigo/violet accent).
+ */
+@theme {
+  --color-zinc-50: #f4f6fb;
+  --color-zinc-100: #e9edf6;
+  --color-zinc-200: #d3d9e8;
+  --color-zinc-300: #b3bbd0;
+  --color-zinc-400: #8892ad;
+  --color-zinc-500: #646f8c;
+  --color-zinc-600: #465069;
+  --color-zinc-700: #2d3750;
+  --color-zinc-800: #1d2640;
+  --color-zinc-850: #171f36;
+  --color-zinc-900: #0f1529;
+  --color-zinc-950: #080c1b;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #080c1b;
+  --foreground: #e9edf6;
+  --glass-bg: rgba(255, 255, 255, 0.035);
+  --glass-border: rgba(255, 255, 255, 0.08);
 }
 
 @theme inline {
@@ -12,15 +34,33 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+body {
+  background:
+    radial-gradient(1100px 520px at 12% -10%, rgba(99, 102, 241, 0.13), transparent 60%),
+    radial-gradient(900px 480px at 100% 0%, rgba(139, 92, 246, 0.09), transparent 60%),
+    var(--background);
+  background-attachment: fixed;
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Liquid-glass surface used for panels and floating controls. */
+.glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 18px 40px -18px rgba(0, 0, 0, 0.6);
 }
+
+/* Thin scrollbars that fit the dark UI (timeline zoom scroll, panels). */
+* { scrollbar-width: thin; scrollbar-color: #2d3750 transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* Caption entrance animations */
+@keyframes cap-fade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes cap-pop { from { opacity: 0; transform: scale(0.82) } 60% { transform: scale(1.06) } to { opacity: 1; transform: scale(1) } }
+@keyframes cap-slide { from { opacity: 0; transform: translateY(0.6em) } to { opacity: 1; transform: translateY(0) } }

@@ -13,6 +13,13 @@ import { toTimedWords, DEFAULT_CAPTION_STYLE, CaptionStyle } from '@/lib/editor/
 import { FramingKeyframe } from '@/lib/editor/framing';
 import { STORAGE_DIR } from '@/lib/paths';
 import { getCachedTranscript, generateClipSRT } from '@/lib/intelligence/transcription-service';
+import { applyAudioDesign } from '@/lib/studio/mix';
+import { hasAudioWork } from '@/lib/studio/audio-spec';
+import { composeAss } from '@/lib/studio/overlay';
+import { logoFile } from '@/lib/studio/logo-store';
+import { pickKeywords } from '@/lib/studio/keywords';
+import { planRetime, retimeSegment } from '@/lib/studio/retime';
+import { isIdentityMap, remapWords, remapTrack } from '@/lib/studio/pacing';
 
 export async function POST(request: NextRequest) {
   try {
@@ -99,7 +106,9 @@ export async function POST(request: NextRequest) {
       const outputPath = path.join(CLIPS_DIR, outputFilename);
       const prod = clipData.production;
       // Production settings (from the Export tab) decide the output shape; legacy clips use aspectRatio.
-      const vertical = prod ? prod.platform !== 'youtube' : false;
+      const canvasKind = prod?.studio?.canvas;
+      const vertical = prod ? (prod.platform !== 'youtube' || !!canvasKind) : false;
+      const canvas = canvasKind === 'square' ? { w: 1080, h: 1080 } : canvasKind === 'four_five' ? { w: 1080, h: 1350 } : { w: 1080, h: 1920 };
       const sourceIsLandscape = source.metadata.width > source.metadata.height;
       const aspectRatio: 'original' | 'portrait_blur' | 'portrait_crop' = prod
         ? (vertical && sourceIsLandscape ? (prod.layout === 'fit' ? 'portrait_blur' : 'portrait_crop') : 'original')
@@ -121,6 +130,29 @@ export async function POST(request: NextRequest) {
 
       videoStore.setClip(segment);
 
+      // Creative Studio pacing: silence removal / speed. The segment is retimed first (to a temp file) and everything tied to clip time
+      // (captions, face-track, overlays) is remapped through the same time map, so nothing drifts. Failure falls back to the plain cut.
+      let inputPath = source.localPath, cs = start, ce = end, retimedPath: string | undefined;
+      let timeMap: import('@/lib/studio/pacing').TimeMap | undefined;
+      const pacingNote: { applied?: string; error?: string } = {};
+      const pc = prod?.studio?.pacing;
+      if (pc && (pc.removeSilence || pc.speed !== 1)) {
+        try {
+          const { map } = await planRetime(source.localPath, start, end, { removeSilence: pc.removeSilence, speed: pc.speed });
+          if (!isIdentityMap(map, end - start)) {
+            retimedPath = path.join(os.tmpdir(), `${clipId}_retimed.mp4`);
+            await retimeSegment(source.localPath, retimedPath, start, end, map);
+            inputPath = retimedPath; cs = 0; ce = map.outDuration; timeMap = map;
+            pacingNote.applied = `${pc.removeSilence ? `removed ${map.removedSeconds.toFixed(1)}s of silence` : ''}${pc.removeSilence && pc.speed !== 1 ? ', ' : ''}${pc.speed !== 1 ? `${pc.speed}× speed` : ''} (${(end - start).toFixed(1)}s → ${map.outDuration.toFixed(1)}s)`;
+          } else pacingNote.applied = 'no silences long enough to remove; clip unchanged';
+        } catch (e) {
+          console.error(`Pacing failed for ${clipId}:`, e);
+          pacingNote.error = `pacing skipped: ${(e as Error).message.slice(0, 200)}`;
+          if (retimedPath && fs.existsSync(retimedPath)) { try { fs.unlinkSync(retimedPath); } catch { /* ignore */ } }
+          retimedPath = undefined; timeMap = undefined; inputPath = source.localPath; cs = start; ce = end;
+        }
+      }
+
       // Check if transcript exists for subtitle burning or webvtt attachment
       const transcript = getCachedTranscript(sourceId);
       let tempSrtPath: string | undefined = undefined;
@@ -129,12 +161,17 @@ export async function POST(request: NextRequest) {
       if (burnSubtitles && transcript) {
         if (prod?.captions) {
           // Styled captions: same style/words/position as the live preview.
-          const outW = aspectRatio === 'original' ? source.metadata.width : 1080;
-          const outH = aspectRatio === 'original' ? source.metadata.height : 1920;
+          const outW = aspectRatio === 'original' ? source.metadata.width : canvas.w;
+          const outH = aspectRatio === 'original' ? source.metadata.height : canvas.h;
           assPath = path.join(os.tmpdir(), `${clipId}_captions.ass`);
+          const allWords = toTimedWords(transcript.segments);
+          const clipWords = timeMap ? remapWords(allWords, timeMap, start) : allWords;
+          // Keyword emphasis only looks at the words inside this clip, so a keyword is "important here", not "important in the whole video".
+          const emphasis = prod.studio?.keywordHighlight ? pickKeywords(clipWords.filter((w) => w.end > cs && w.start < ce)) : undefined;
           fs.writeFileSync(assPath, buildAss({
-            words: toTimedWords(transcript.segments),
-            clipStart: start, clipEnd: end,
+            emphasis,
+            words: clipWords,
+            clipStart: cs, clipEnd: ce,
             style: { ...DEFAULT_CAPTION_STYLE, ...(prod.captions as Partial<CaptionStyle>) },
             platform: prod.platform, playResX: outW, playResY: outH,
           }), 'utf8');
@@ -144,31 +181,59 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // Creative Studio: title card / end card / brand mark share the captions' ASS file (works without a transcript too).
+      if (prod?.studio?.overlays) {
+        const outW = aspectRatio === 'original' ? source.metadata.width : canvas.w;
+        const outH = aspectRatio === 'original' ? source.metadata.height : canvas.h;
+        const baseAss = assPath && fs.existsSync(assPath) ? fs.readFileSync(assPath, 'utf8') : null;
+        const merged = composeAss(baseAss, prod.studio.overlays, outW, outH, ce - cs);
+        if (merged) {
+          assPath = assPath ?? path.join(os.tmpdir(), `${clipId}_captions.ass`);
+          fs.writeFileSync(assPath, merged, 'utf8');
+        }
+      }
+
       // Framing: centre of the 9:16 window as an ffmpeg expression (static, or piecewise-linear over clip time).
       const cropOpts = prod && aspectRatio === 'portrait_crop' ? {
         zoom: Math.min(3, Math.max(1, prod.framing.zoom || 1)),
-        centerExpr: framingExpr(prod.framing, start, end, source.metadata),
+        centerExpr: framingExpr(timeMap && prod.framing.track ? { ...prod.framing, track: remapTrack(prod.framing.track, timeMap, start) } : prod.framing, cs, ce, source.metadata, canvas.w / canvas.h),
       } : undefined;
       const fontsDir = fs.existsSync(path.join(STORAGE_DIR, 'fonts')) ? path.join(STORAGE_DIR, 'fonts') : undefined;
 
       try {
         await cutVideoSegment({
-          inputPath: source.localPath,
+          inputPath,
           outputPath,
-          startTime: start,
-          endTime: end,
+          startTime: cs,
+          endTime: ce,
           aspectRatio,
           subtitlesPath: tempSrtPath,
-          assPath, fontsDir, crop: cropOpts,
+          assPath, fontsDir, crop: cropOpts, canvas,
+          logo: prod?.studio?.logo && logoFile(prod.studio.logo.identityId) ? { path: logoFile(prod.studio.logo.identityId)!, corner: prod.studio.logo.corner } : undefined,
           onProgress: (percent) => {
             videoStore.updateClipProgress(clipId, percent);
           },
         });
 
         // Clean up temp srt if created
-        for (const f of [tempSrtPath, assPath]) {
+        for (const f of [tempSrtPath, assPath, retimedPath]) {
           if (f && fs.existsSync(f)) {
             try { fs.unlinkSync(f); } catch { /* ignore */ }
+          }
+        }
+
+        // Creative Studio post-pass: music bed, SFX, ducking, loudness and optional colour grade. Video is stream-copied unless a
+        // grade is requested. A failure here never fails the clip: the plain cut is kept and the reason is reported.
+        let studioReport: ClipSegment['studioReport'];
+        if (pacingNote.applied || pacingNote.error) studioReport = { applied: pacingNote.applied ? [`pacing: ${pacingNote.applied}`] : [], skipped: [], error: pacingNote.error };
+        const design = prod?.studio?.audioDesign;
+        if (design && hasAudioWork(design)) {
+          try {
+            const r = await applyAudioDesign(outputPath, design, path.join(STORAGE_DIR, 'studio', 'audio-cache'));
+            studioReport = { applied: [...(studioReport?.applied ?? []), ...r.applied], skipped: r.skipped, ms: r.ms, error: studioReport?.error };
+          } catch (designErr) {
+            console.error(`Sound design failed for ${clipId}:`, designErr);
+            studioReport = { applied: studioReport?.applied ?? [], skipped: [], error: (designErr as Error).message.slice(0, 300) };
           }
         }
 
@@ -185,6 +250,7 @@ export async function POST(request: NextRequest) {
           outputDuration: clipMeta.duration,
           subtitlesUrl: transcript ? `/api/video/subtitles?clipId=${encodeURIComponent(clipId)}` : undefined,
           completedAt: Date.now(),
+          studioReport,
         };
 
         videoStore.setClip(completedSegment);
@@ -193,6 +259,7 @@ export async function POST(request: NextRequest) {
       } catch (cutErr) {
         console.error(`Error cutting clip ${clipId}:`, cutErr);
         const errorMsg = (cutErr as Error).message || 'FFmpeg extraction failed';
+        if (retimedPath && fs.existsSync(retimedPath)) { try { fs.unlinkSync(retimedPath); } catch { /* ignore */ } }
         videoStore.failClip(clipId, errorMsg);
         segment.status = 'error';
         segment.error = errorMsg;
@@ -232,10 +299,10 @@ export async function GET(request: NextRequest) {
 /** ffmpeg expression for the crop-window centre (fraction of source width) over CLIP time. */
 function framingExpr(
   f: { mode: string; manualX: number; zoom: number; track?: { t: number; x: number }[] | null },
-  start: number, end: number, meta: { width: number; height: number }
+  start: number, end: number, meta: { width: number; height: number }, ratio = 9 / 16
 ): string {
   const zoom = Math.min(3, Math.max(1, f.zoom || 1));
-  const wf = Math.min(1, (meta.height * (9 / 16)) / meta.width / zoom); // window width / source width
+  const wf = Math.min(1, (meta.height * ratio) / meta.width / zoom); // window width / source width
   const clampC = (c: number) => Math.min(1 - wf / 2, Math.max(wf / 2, c));
   switch (f.mode) {
     case 'left': return String(wf / 2);

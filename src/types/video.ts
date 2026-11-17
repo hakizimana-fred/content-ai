@@ -51,6 +51,8 @@ export interface ClipSegment {
   outputUrl?: string;
   outputSize?: number; // in bytes
   outputDuration?: number; // in seconds
+  /** What the Creative Studio post-pass applied/skipped for this clip (sound design, grade). */
+  studioReport?: { applied: string[]; skipped: string[]; ms?: number; error?: string };
   error?: string;
   createdAt: number;
   completedAt?: number;
@@ -63,6 +65,20 @@ export interface ProductionSettings {
   framing: { mode: string; manualX: number; zoom: number; track?: { t: number; x: number }[] | null };
   /** Present only when captions should be burned in. Shape = CaptionStyle (src/lib/editor/captions.ts). */
   captions?: Record<string, unknown> | null;
+  /** Creative Studio extras: sound design / colour grade (post-pass), title/end-card overlays, and the plan that produced them. */
+  studio?: {
+    audioDesign?: import('@/lib/studio/audio-spec').AudioDesignSpec;
+    overlays?: import('@/lib/studio/overlay').OverlaySpec;
+    plan?: import('@/lib/studio/plan').EditingPlan;
+    /** Colour detected keywords (numbers, names, strong words) in the burned captions. */
+    keywordHighlight?: boolean;
+    /** Silence removal and/or speed change, applied before captions so timing stays in sync. */
+    pacing?: { removeSilence: boolean; speed: number };
+    /** Non-9:16 social canvas for landscape sources: 1080x1080 or 1080x1350. */
+    canvas?: 'square' | 'four_five';
+    /** Identity logo image drawn in a corner of the whole clip. Resolved to a file at render time. */
+    logo?: { identityId: string; corner: 'tl' | 'tr' | 'bl' | 'br' };
+  };
 }
 
 export interface CutRequest {

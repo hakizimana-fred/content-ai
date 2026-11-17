@@ -1,11 +1,12 @@
 'use client';
 
 import React from 'react';
-import { Scissors, Film, Sparkles, HelpCircle, Upload, FileVideo, Edit3, CheckCircle2, AlertTriangle, Crop, Captions, Palette, Download } from 'lucide-react';
+import { Scissors, Film, Sparkles, HelpCircle, Upload, FileVideo, Edit3, CheckCircle2, AlertTriangle, Crop, Captions, Palette, Download, Radar, Wand2, Clapperboard } from 'lucide-react';
 import { VideoSource, IngestionJob } from '@/types/video';
 import { formatTime, formatResolution, formatBytes } from '@/lib/format';
 
-export type EditorTab = 'media' | 'trim' | 'crop' | 'captions' | 'style' | 'export';
+export type EditorTab = 'media' | 'trim' | 'crop' | 'captions' | 'style' | 'director' | 'export';
+export type AppView = 'editor' | 'moments' | 'radar' | 'studio' | 'auto' | 'library';
 
 const EDITOR_STEPS: { id: EditorTab; label: string; icon: React.ReactNode }[] = [
   { id: 'media', label: 'Media', icon: <Film className="w-3.5 h-3.5" /> },
@@ -13,6 +14,7 @@ const EDITOR_STEPS: { id: EditorTab; label: string; icon: React.ReactNode }[] = 
   { id: 'crop', label: 'Crop', icon: <Crop className="w-3.5 h-3.5" /> },
   { id: 'captions', label: 'Captions', icon: <Captions className="w-3.5 h-3.5" /> },
   { id: 'style', label: 'Style', icon: <Palette className="w-3.5 h-3.5" /> },
+  { id: 'director', label: 'AI Director', icon: <Wand2 className="w-3.5 h-3.5" /> },
   { id: 'export', label: 'Export', icon: <Download className="w-3.5 h-3.5" /> },
 ];
 
@@ -21,11 +23,11 @@ interface HeaderProps {
   onEditorTab?: (t: EditorTab) => void;
   exportCount?: number;
   currentSource: VideoSource | null;
-  currentView: 'editor' | 'moments' | 'library';
+  currentView: AppView;
   projectCount: number;
   activeIngestionJob?: IngestionJob | null;
   onOpenIngestionModal?: () => void;
-  onSwitchView: (view: 'editor' | 'moments' | 'library') => void;
+  onSwitchView: (view: AppView) => void;
   onImportNew: () => void;
   onLoadSample: () => void;
   onOpenShortcuts: () => void;
@@ -95,6 +97,33 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <Sparkles className="w-3.5 h-3.5" />
           <span>Moments</span>
+        </button>
+        <button
+          onClick={() => onSwitchView('radar')}
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full font-medium transition-all ${
+            currentView === 'radar' ? 'bg-white text-zinc-950 shadow-md' : 'text-zinc-400 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <Radar className="w-3.5 h-3.5" />
+          <span>Radar</span>
+        </button>
+        <button
+          onClick={() => onSwitchView('auto')}
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full font-medium transition-all ${
+            currentView === 'auto' ? 'bg-white text-zinc-950 shadow-md' : 'text-zinc-400 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <Clapperboard className="w-3.5 h-3.5" />
+          <span>Auto Studio</span>
+        </button>
+        <button
+          onClick={() => onSwitchView('studio')}
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full font-medium transition-all ${
+            currentView === 'studio' ? 'bg-white text-zinc-950 shadow-md' : 'text-zinc-400 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <Wand2 className="w-3.5 h-3.5" />
+          <span>Studio</span>
         </button>
         <button
           onClick={() => onSwitchView('library')}

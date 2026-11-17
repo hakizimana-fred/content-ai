@@ -1,5 +1,7 @@
-import { CaptionLine, CaptionStyle, TimedWord, applyCase, buildLines, captionCenterY } from './captions';
-import { PLATFORMS, PlatformId } from './platforms';
+import { applyCase, buildLines, captionCenterY } from './captions';
+import type { CaptionLine, CaptionStyle, TimedWord } from './captions';
+import { PLATFORMS } from './platforms';
+import type { PlatformId } from './platforms';
 
 /** ASS colour: &HAABBGGRR (alpha 00 = opaque). */
 const assColor = (hex: string, alpha = 0) => {
@@ -22,6 +24,8 @@ export interface AssOptions {
   platform: PlatformId;
   playResX: number;
   playResY: number;
+  /** Normalised words to emphasise throughout (accent colour + slight enlargement). Ignored for karaoke animation. */
+  emphasis?: Set<string>;
 }
 
 /**
@@ -77,6 +81,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   const pos = style.entrance === 'slide' ? '' : `\\pos(${cx},${cy})`;
   const base = `{\\an5${pos}${entrance}}`;
   const W = (w: TimedWord) => esc(applyCase(w.text, style.caseMode));
+  // Keyword emphasis: persistent accent colour + slight enlargement, then reset to the normal text colour.
+  const normW = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}'%$]/gu, '').replace(/^'+|'+$/g, '');
+  const K = (w: TimedWord) => (o.emphasis && o.emphasis.has(normW(w.text)) && style.animation !== 'karaoke'
+    ? `{\\c${assColor(style.highlightColor)}\\fscx110\\fscy110}${W(w)}{\\c${assColor(style.textColor)}\\fscx100\\fscy100}` : W(w));
 
   const events: string[] = [];
   const push = (start: number, end: number, text: string) => {
@@ -91,14 +99,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       line.words.forEach((w, i) => {
         const s = i === 0 ? line.start : w.start;
         const e = i === line.words.length - 1 ? lineEnd : line.words[i + 1].start;
-        const body = line.words.map((x, j) => (j === i ? `{\\c${assColor(style.highlightColor)}}${W(x)}{\\c${assColor(style.textColor)}}` : W(x))).join(' ');
+        const body = line.words.map((x, j) => (j === i ? `{\\c${assColor(style.highlightColor)}}${W(x)}{\\c${assColor(style.textColor)}}` : K(x))).join(' ');
         push(s, e, `${i === 0 ? base : `{\\an5${pos}}`}${body}`);
       });
     } else if (style.animation === 'karaoke') {
       const body = line.words.map((w) => `{\\kf${Math.max(1, Math.round((w.end - w.start) * 100))}}${W(w)}`).join(' ');
       push(line.start, lineEnd, `${base}${body}`);
     } else {
-      push(line.start, lineEnd, `${base}${line.words.map(W).join(' ')}`);
+      push(line.start, lineEnd, `${base}${line.words.map(K).join(' ')}`);
     }
   });
 

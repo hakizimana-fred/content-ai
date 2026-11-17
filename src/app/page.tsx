@@ -14,6 +14,13 @@ import { VideoLibrary } from '@/components/VideoLibrary';
 import { DuplicateProjectModal } from '@/components/DuplicateProjectModal';
 import { ShortcutsModal } from '@/components/ShortcutsModal';
 import { IngestionProgressModal } from '@/components/IngestionProgressModal';
+import { RadarWorkspace } from '@/components/RadarWorkspace';
+import { AutoStudioWorkspace } from '@/components/AutoStudioWorkspace';
+import { StudioWorkspace, SoundPick } from '@/components/StudioWorkspace';
+import { DirectorPanel, DirectorMeta } from '@/components/editor/DirectorPanel';
+import { EditingPlan } from '@/lib/studio/plan';
+import type { ProduceResult } from '@/lib/studio/produce';
+import type { Identity } from '@/lib/studio/identity';
 import { MomentsWorkspace } from '@/components/MomentsWorkspace';
 import { MediaPanel } from '@/components/editor/MediaPanel';
 import { CropPanel, TrackState } from '@/components/editor/CropPanel';
@@ -29,7 +36,7 @@ import { VideoSource, VideoProject, ClipSegment, IngestionJob, ProductionSetting
 import { ContentAnalysisReport, CandidateMoment } from '@/lib/intelligence/types';
 
 export default function VideoCutterPage() {
-  const [currentView, setCurrentView] = useState<'editor' | 'moments' | 'library'>('editor');
+  const [currentView, setCurrentView] = useState<'editor' | 'moments' | 'radar' | 'studio' | 'auto' | 'library'>('editor');
   const [projectCount, setProjectCount] = useState(0);
 
   const [currentSource, setCurrentSource] = useState<VideoSource | null>(null);
@@ -69,7 +76,7 @@ export default function VideoCutterPage() {
 
   // Content Intelligence Engine State
   // Editor workspace (Media | Trim | Crop | Captions | Style | Export)
-  const [editorTab, setEditorTab] = useState<'media' | 'trim' | 'crop' | 'captions' | 'style' | 'export'>('trim');
+  const [editorTab, setEditorTab] = useState<'media' | 'trim' | 'crop' | 'captions' | 'style' | 'director' | 'export'>('trim');
   const [platform, setPlatform] = useState<PlatformId>('tiktok');
   const [showSafeAreas, setShowSafeAreas] = useState(false);
   const [framing, setFraming] = useState<FramingSettings>(DEFAULT_FRAMING);
@@ -79,6 +86,14 @@ export default function VideoCutterPage() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [trackState, setTrackState] = useState<TrackState>({ status: 'idle' });
   const [scenes, setScenes] = useState<number[]>([]);
+  // Creative Studio: the Director's plan and the sound/overlay extras that Export adds on top of the normal production settings
+  const [directorPlan, setDirectorPlan] = useState<EditingPlan | null>(null);
+  const [directorMeta, setDirectorMeta] = useState<DirectorMeta | null>(null);
+  const [studioExtras, setStudioExtras] = useState<ProductionSettings['studio'] | null>(null);
+  const [studioReport, setStudioReport] = useState<{ applied: string[]; skipped: string[] } | null>(null);
+  const [identities, setIdentities] = useState<Identity[]>([]);
+  const [identityId, setIdentityId] = useState('');
+  const [isProducing, setIsProducing] = useState(false);
   const [isDetectingScenes, setIsDetectingScenes] = useState(false);
   const [latestExportId, setLatestExportId] = useState<string | null>(null);
   const [analysisReport, setAnalysisReport] = useState<ContentAnalysisReport | null>(null);
@@ -466,7 +481,8 @@ export default function VideoCutterPage() {
       const completed = data.clips[0] as ClipSegment;
       setClips((prev) => prev.map((c) => (c.id === targetClip.id ? completed : c)));
       refreshProjectCount();
-      showNotification(`Clip "${completed.name}" generated successfully!`);
+      showNotification(completed.studioReport?.error ? `Clip "${completed.name}" generated, but the sound design step failed: ${completed.studioReport.error}` : `Clip "${completed.name}" generated successfully!`, completed.studioReport?.error ? 'error' : 'success');
+      if (completed.studioReport) setStudioReport({ applied: completed.studioReport.applied, skipped: completed.studioReport.skipped });
       // Automatically pop up the completed clip in the independent preview modal
       setActiveModalClip(completed);
       setPreviewModalAutoPlay(true);
@@ -549,6 +565,7 @@ export default function VideoCutterPage() {
     layout: framing.layout,
     framing: { mode: framing.mode, manualX: framing.manualX, zoom: framing.zoom, track: framing.mode === 'auto' ? framing.track : null },
     captions: captionsEnabled && transcript ? { ...captionStyle } : null,
+    studio: studioExtras ?? undefined,
   });
 
   const newClip = (name: string, startTime: number, endTime: number, production?: ProductionSettings): ClipSegment => ({
@@ -563,6 +580,43 @@ export default function VideoCutterPage() {
     setClips((prev) => [...prev, clip]);
     setLatestExportId(clip.id);
     await executeCutClip(clip);
+  };
+
+  // ---- Creative Studio: AI Director ----
+  useEffect(() => { fetch('/api/studio/identities').then((r) => r.json()).then((d) => d.success && setIdentities(d.identities)).catch(() => {}); }, [currentView]);
+
+  const handleDirectorPlan = (plan: EditingPlan, meta: DirectorMeta | null) => { setDirectorPlan(plan); setDirectorMeta(meta); };
+  // "Apply to editor": fill the existing Crop / Captions / Export state from the plan, so every setting stays editable.
+  const handleApplyStudio = (r: ProduceResult) => {
+    setPlatform(r.production.platform);
+    setFraming((f) => ({ ...f, layout: r.production.layout, mode: r.production.framing.mode as FramingSettings['mode'], zoom: r.production.framing.zoom, }));
+    setCaptionStyle(r.captionStyle);
+    if (r.captionsEnabled) setCaptionsEnabled(true);
+    setStudioExtras(r.production.studio ?? null);
+    setStudioReport({ applied: r.applied, skipped: r.skipped });
+    showNotification('Plan applied. Review Crop, Captions and Export, then export.');
+  };
+  // "Auto-produce": the server chose the moment and built the settings; render through the normal export flow.
+  const handleProduceStudio = async (spec: { name: string; startTime: number; endTime: number; production: ProductionSettings }, report: { applied: string[]; skipped: string[] }) => {
+    if (!currentSource) return;
+    setStudioReport(report);
+    setIsProducing(true);
+    const clip = newClip(spec.name, spec.startTime, spec.endTime, spec.production);
+    setClips((prev) => [...prev, clip]);
+    setLatestExportId(clip.id);
+    showNotification('Rendering your video…');
+    try { await executeCutClip(clip); } finally { setIsProducing(false); }
+  };
+  const handleUseSound = (pick: SoundPick) => {
+    setStudioExtras((prev) => ({
+      ...prev,
+      audioDesign: {
+        mood: pick.mood as never, intensity: pick.intensity as never, music: true, musicVolume: prev?.audioDesign?.musicVolume ?? 0.15, soundEffects: prev?.audioDesign?.soundEffects ?? false,
+        ducking: true, ending: prev?.audioDesign?.ending ?? 'none', seed: pick.seed, sfxCues: prev?.audioDesign?.sfxCues ?? [], grade: prev?.audioDesign?.grade ?? 'none', overrides: pick.overrides as never,
+      },
+    }));
+    showNotification('Sound added to this video. It will be mixed in when you export.');
+    setCurrentView('editor'); setEditorTab('director');
   };
 
   // ---- Moments actions ----
@@ -780,6 +834,12 @@ export default function VideoCutterPage() {
               setCurrentView('editor');
             }}
           />
+        ) : currentView === 'radar' ? (
+          <RadarWorkspace />
+        ) : currentView === 'auto' ? (
+          <AutoStudioWorkspace identities={identities.map((i) => ({ id: i.id, name: i.name }))} />
+        ) : currentView === 'studio' ? (
+          <StudioWorkspace onUseSound={handleUseSound} hasVideo={!!currentSource} />
         ) : currentView === 'moments' ? (
           <MomentsWorkspace
             source={currentSource}
@@ -937,6 +997,26 @@ export default function VideoCutterPage() {
                   )}
                   {editorTab === 'style' && (
                     <StylePanel platform={platform} onPlatformChange={setPlatform} showSafeAreas={showSafeAreas} onToggleSafeAreas={setShowSafeAreas} />
+                  )}
+                  {editorTab === 'director' && (
+                    <DirectorPanel
+                      sourceId={currentSource.id}
+                      range={{ start: validation.ok ? selection.start : null, end: validation.ok ? selection.end : null }}
+                      hasTranscript={!!transcript}
+                      sceneTimes={scenes}
+                      track={framing.track}
+                      clipTitle={currentSource.title || 'Short'}
+                      plan={directorPlan}
+                      meta={directorMeta}
+                      identityId={identityId}
+                      identities={identities}
+                      applied={studioReport}
+                      isProducing={isProducing}
+                      onIdentityChange={setIdentityId}
+                      onPlan={handleDirectorPlan}
+                      onApply={handleApplyStudio}
+                      onProduce={handleProduceStudio}
+                    />
                   )}
                   {editorTab === 'export' && (
                     <div className="flex flex-col gap-6">

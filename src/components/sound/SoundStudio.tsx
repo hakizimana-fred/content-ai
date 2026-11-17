@@ -38,6 +38,7 @@ const TrackCard: React.FC<{ e: Entry; selected: boolean; onSelect: () => void; o
         <button type="button" onClick={onFav} aria-pressed={e.favourite} aria-label={e.favourite ? 'Remove favourite' : 'Favourite'} className="p-1.5 rounded-full hover:bg-white/10"><Heart className={`w-4 h-4 ${e.favourite ? 'fill-rose-400 text-rose-400' : 'text-zinc-400'}`} /></button>
         <button type="button" onClick={onSelect} aria-pressed={selected} aria-label={selected ? `Deselect ${e.label}` : `Select ${e.label}`} className={`w-7 h-7 grid place-items-center rounded-md border ${selected ? 'bg-violet-500 border-violet-300' : 'border-white/20 hover:bg-white/10'}`}>{selected && <Check className="w-4 h-4 text-white" />}</button>
         <PlayButton track={trackOf(e)} size="sm" />
+        <a href={`/api/studio/sound/file?id=${e.id}&download=1`} download aria-label={`Download ${e.label}`} title="Download this track" data-testid={`download-${e.id}`} className="p-1.5 rounded-full text-zinc-400 hover:text-white hover:bg-white/10"><Download className="w-3.5 h-3.5" /></a>
         <button type="button" onClick={onDelete} aria-label={`Delete ${e.label}`} className="p-1.5 rounded-full text-zinc-500 hover:text-rose-300 hover:bg-white/10"><Trash2 className="w-3.5 h-3.5" /></button>
       </div>
     </li>

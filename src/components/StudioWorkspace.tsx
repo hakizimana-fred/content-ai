@@ -97,6 +97,7 @@ const SonicTab: React.FC<{ onUseSound?: (p: SoundPick) => void; hasVideo: boolea
                 <button onClick={() => play(i.id)} className={`w-8 h-8 rounded-full flex items-center justify-center ${playing === i.id ? 'bg-violet-500 text-white' : 'bg-white/10 text-zinc-200 hover:bg-white/20'}`} aria-label={`Play ${i.label}`}><Play className="w-3.5 h-3.5" /></button>
                 <div className="min-w-0 flex-1"><div className="text-sm text-white truncate">{label(i.label)}</div><div className="text-[11px] text-zinc-500 truncate">{i.intensity} · {i.seconds}s · rendered in {(i.renderMs / 1000).toFixed(1)}s{i.prompt ? ` · “${i.prompt}”` : ''}</div></div>
                 {onUseSound && <button disabled={!hasVideo} title={hasVideo ? 'Use this exact sound in the current video' : 'Open a video first'} onClick={() => onUseSound({ mood: i.mood!, intensity: i.intensity!, seed: i.seed, overrides: i.overrides ?? {} })} className={btn}>Use</button>}
+                <a href={`/api/studio/sound/file?id=${i.id}&download=1`} download aria-label={`Download ${i.label}`} title="Download this track" className="p-1.5 text-zinc-400 hover:text-white"><Download className="w-3.5 h-3.5" /></a>
                 <button onClick={() => remove(i.id)} className="p-1.5 text-zinc-500 hover:text-rose-300" aria-label="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
               </div>
               <div className="text-[10px] text-zinc-600 mt-1.5">Licence: {i.license.license}. Commercial use OK, no attribution.</div>

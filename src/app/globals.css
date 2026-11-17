@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import "tailwindcss" source("../");
 
 /*
  * Design tokens. The whole app is styled with Tailwind's `zinc-*` scale; instead of rewriting

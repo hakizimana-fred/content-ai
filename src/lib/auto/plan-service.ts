@@ -1,10 +1,13 @@
+import { getIdentity } from '../studio/identity-store.ts';
+import { brandOf } from './brand.ts';
 import { buildCreativePlan, type PlanOpts } from './creative.ts';
 import { getCreative } from './creative-assets.ts';
 import { getProject, updateProject } from './store.ts';
 import type { AutoProject, CreativePlan } from './types.ts';
 
 /** Is a stored plan still valid for the project's current instruction and mode? */
-export const planIsCurrent = (p: AutoProject) => !!p.creative && p.creative.originalPrompt === p.config.prompt;
+export const planIsCurrent = (p: AutoProject) => !!p.creative && p.creative.originalPrompt === p.config.prompt && (p.creative.brand?.id ?? null) === (p.config.identityId ?? null)
+  && (!p.config.identityId || p.creative.brand?.updatedAt === getIdentity(p.config.identityId)?.updatedAt);
 
 export function creativeAssetsOf(p: AutoProject) {
   return (p.config.creativeAssetIds ?? []).map(getCreative).filter((x): x is NonNullable<typeof x> => !!x && ['background', 'photo', 'footage', 'overlay'].includes(x.kind)).map((x) => ({ id: x.id, kind: x.kind, name: x.name }));
@@ -15,7 +18,8 @@ export async function generatePlan(projectId: string, opts: { useModel: boolean;
   const p = getProject(projectId); if (!p) throw new Error('project not found');
   const mode = p.config.mode ?? 'video'; const hasMedia = p.assets.some((a) => a.kind !== 'audio');
   const mixed = mode === 'mixed' && hasMedia;
-  const po: PlanOpts = { seconds: p.config.durationSec, beat: 0.5, mixed, creativeAssets: creativeAssetsOf(p), signal: opts.signal };
+  const idn = p.config.identityId ? getIdentity(p.config.identityId) : null;
+  const po: PlanOpts = { seconds: p.config.durationSec, beat: 0.5, mixed, creativeAssets: creativeAssetsOf(p), signal: opts.signal, brand: idn ? { ...brandOf(idn), updatedAt: idn.updatedAt } : undefined };
   if (opts.useModel && !mixed) {
     const { plannerLLM } = await import('../studio/service.ts'); const m = plannerLLM('auto-creative-director');
     if (m.ok) po.llm = { id: m.id, run: m.llm }; else po.llmUnavailable = m.reason;

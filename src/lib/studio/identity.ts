@@ -8,7 +8,10 @@ import { PRODUCTION_STYLES } from './styles.ts';
 export interface Identity {
   id: string;
   name: string;
-  colors: { primary: string; accent: string; text: string };
+  colors: { primary: string; accent: string; text: string; secondary?: string };
+  /** Brand profile extras (all optional so identities saved before this still load). */
+  tagline?: string;
+  logoStyle?: LogoStyle;
   typography: { fontFamily: string; fontWeight: number };
   caption: { preset: EditingPlan['captions']['preset']; position?: EditingPlan['captions']['position']; overrides: Partial<CaptionStyle> };
   opening: { style: 'none' | 'title_card'; seconds: number };
@@ -20,11 +23,14 @@ export interface Identity {
   style: EditingPlan['style'];
   grade: Grade | 'style';
   /** Uploaded logo image (stored in storage/studio/logos). Placed at the brand corner. Managed by the upload endpoint, not the edit form. */
-  logo?: { ext: 'png' | 'jpg' | 'webp' };
+  logo?: { ext: 'png' | 'jpg' | 'webp'; source?: 'svg' | 'raster'; width?: number; height?: number; aspect?: number; hasAlpha?: boolean; extracted?: { hex: string; share: number }[] };
   createdAt: number;
   updatedAt: number;
 }
 
+/** How the logo is used in generated videos. The logo image itself is never altered; `extrude` is an explicit opt-in to a stylised 3D version. */
+export interface LogoStyle { opening: boolean; closing: boolean; watermark: boolean; scale: number; reveal: 'fade' | 'rise' | 'sweep'; extrude: boolean }
+export const DEFAULT_LOGO_STYLE: LogoStyle = { opening: true, closing: true, watermark: true, scale: 1, reveal: 'sweep', extrude: false };
 export type IdentityInput = Omit<Identity, 'id' | 'createdAt' | 'updatedAt' | 'logo'>;
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
@@ -68,7 +74,9 @@ export function validateIdentity(v: unknown): { ok: true; identity: IdentityInpu
   const fontFamily = oneOf('typography.fontFamily', o.typography?.fontFamily, FONTS);
   const id: IdentityInput = {
     name,
-    colors: { primary: hex('colors.primary', o.colors?.primary), accent: hex('colors.accent', o.colors?.accent), text: hex('colors.text', o.colors?.text) },
+    colors: { primary: hex('colors.primary', o.colors?.primary), accent: hex('colors.accent', o.colors?.accent), text: hex('colors.text', o.colors?.text), ...(o.colors?.secondary ? { secondary: hex('colors.secondary', o.colors.secondary) } : {}) },
+    ...(o.tagline ? { tagline: str('tagline', o.tagline, 80).trim() } : {}),
+    ...(o.logoStyle ? { logoStyle: { opening: o.logoStyle.opening !== false, closing: o.logoStyle.closing !== false, watermark: o.logoStyle.watermark !== false, scale: num('logoStyle.scale', o.logoStyle.scale ?? 1, 0.5, 1.6), reveal: oneOf('logoStyle.reveal', o.logoStyle.reveal ?? 'sweep', ['fade', 'rise', 'sweep'] as const), extrude: o.logoStyle.extrude === true } } : {}),
     typography: { fontFamily, fontWeight: num('typography.fontWeight', o.typography?.fontWeight, 300, 900) },
     caption: { preset: oneOf('caption.preset', o.caption?.preset, ['clean', 'bold_dynamic', 'cinematic', 'editorial', 'minimal'] as const), position: o.caption?.position === undefined ? undefined : oneOf('caption.position', o.caption.position, ['top', 'center', 'bottom'] as const), overrides: typeof o.caption?.overrides === 'object' && o.caption.overrides ? o.caption.overrides : {} },
     opening: { style: oneOf('opening.style', o.opening?.style, ['none', 'title_card'] as const), seconds: num('opening.seconds', o.opening?.seconds ?? 2, 0.5, 5) },

@@ -4,7 +4,7 @@ export type Format = '9:16' | '16:9' | '1:1';
 export type StyleChoice = 'auto' | 'commercial' | 'cinematic' | 'documentary' | 'social';
 /** How the video is made: from uploaded videos, from photos, from an idea alone, or from uploads plus generated scenes. */
 export type Mode = 'video' | 'image' | 'idea' | 'mixed';
-export type SceneKind = 'intro' | 'text' | 'quote' | 'product' | 'infographic' | 'outro' | 'image' | 'footage' | 'abstract' | 'diagram' | 'showcase' | 'product3d' | 'title3d' | 'journey3d' | 'scenery25' | 'photo25d';
+export type SceneKind = 'intro' | 'text' | 'quote' | 'product' | 'infographic' | 'outro' | 'image' | 'footage' | 'abstract' | 'diagram' | 'showcase' | 'product3d' | 'title3d' | 'journey3d' | 'scenery25' | 'photo25d' | 'logo3d';
 export type BgType = 'gradient' | 'aurora' | 'grid' | 'particles' | 'waves' | 'solid' | 'asset' | 'mesh' | 'bokeh' | 'contours' | 'beams' | 'geo' | 'sky';
 export type Motif = 'rings' | 'diagonals' | 'dots' | 'blocks' | 'orbits' | 'none';
 export type Composition = 'default' | 'slam' | 'stack' | 'left' | 'split' | 'wave' | 'bar' | 'cards' | 'bignum' | 'donuts';
@@ -24,6 +24,8 @@ export interface SceneStat { label: string; value: number; suffix?: string; max?
 export interface SceneSpec {
   id: string; kind: SceneKind; weight: number; bg: BgType; creativeAssetId?: string;
   title?: string; subtitle?: string; lines?: string[]; quote?: string; attribution?: string; cta?: string; bullets?: string[]; stats?: SceneStat[]; steps?: string[];
+  /** Brand logo placement for this scene (decided by the Brand Director; the logo image itself is never altered). file/ver are bound at render time. */
+  logo?: { role: 'opening' | 'closing'; reveal: 'fade' | 'rise' | 'sweep'; scale: number; hero?: boolean; extrude?: boolean; file?: string; ver?: number };
   three?: ThreeSpec; scenery?: 'mountains' | 'city';
   composition?: Composition; motion?: 'push' | 'zoom_out' | 'pan_left' | 'pan_right';
   /** where each text field came from; absent = the user's own words */
@@ -61,7 +63,7 @@ export interface AutoAsset {
 
 export interface AutoConfig {
   prompt: string; format: Format; durationSec: number; style: StyleChoice; audioMode: AudioMode;
-  soundtrackId?: string; headline?: string; cta?: string; identityId?: string;
+  soundtrackId?: string; /** style ingredients for a composed soundtrack (ids from blend.ts) and how many alternatives to compose */ soundtrackStyles?: string[]; soundtrackVariations?: number; headline?: string; cta?: string; identityId?: string;
   /** keep the user's tray order instead of letting the director arrange shots */
   keepOrder: boolean; captions: boolean;
   /** use the local language model to interpret the instruction (slower on CPU); rules always run first */
@@ -100,6 +102,8 @@ export interface CreativePlan {
   concept: string; audience: string; objective: string; direction: string; mood: string[]; ending: string;
   soundtrack: { mood?: string; notes: string }; sfx: string[];
   scenes: SceneSpec[]; look: SceneLook; copy: CopyItem[]; notes: string[]; decided: string[];
+  /** brand profile this plan was made with (id + what the Brand Director decided) */
+  brand?: { id: string; name: string; decisions: string[]; updatedAt: number };
 }
 
 export type MotionType = 'zoom_in' | 'zoom_out' | 'pan_left' | 'pan_right' | 'pan_up' | 'pan_down' | 'ken_burns' | 'subject_focus';

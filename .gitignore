@@ -62,3 +62,6 @@ next-env.d.ts
 # Creative Studio local data (identities, sound library, audio cache, settings)
 /storage/studio/
 /storage/auto/
+
+# python bytecode
+__pycache__/

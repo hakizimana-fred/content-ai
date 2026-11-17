@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { analyseProject } from './analyze.ts';
 import { compose } from './compose.ts';
 import { materialize } from './creative.ts';
+import { bindLogo } from './brand.ts';
 import { generatePlan, planIsCurrent } from './plan-service.ts';
 import { pendingReview } from './copy.ts';
 import { runQc } from './qc.ts';
@@ -90,7 +91,14 @@ async function execute(job: Job, opts: { transcribe?: (a: AutoAsset, p: AutoProj
     // 3. plan: soundtrack first, because the cut points are placed on its beats
     current = 'plan'; st('plan', { status: 'running', detail: 'choosing the soundtrack', progress: 0 });
     const profile = STYLE_PROFILES[intent.style];
-    const sound = resolveSoundtrack(p, { ...intent });
+    let composedNote = '';
+    if (!p.config.soundtrackId && p.config.soundtrackStyles?.length && p.config.audioMode !== 'none' && p.config.audioMode !== 'original') {
+      try {
+        const { composeSoundtrack } = await import('./sonic-compose.ts'); const c = await composeSoundtrack(p, intent.style, (d) => st('plan', { status: 'running', detail: d, progress: 20 }));
+        if (c) { p = { ...p, config: { ...p.config, soundtrackId: c.id, audioMode: 'library' } }; composedNote = `${c.reused ? 'reused' : 'composed'} from ${p.config.soundtrackStyles!.length} style(s): ${c.character}${c.siblings.length ? `; ${c.siblings.length} alternative(s) saved to your library` : ''}`; }
+      } catch (e) { composedNote = `style composition failed (${(e as Error).message.slice(0, 80)}); fell back to the normal soundtrack choice`; }
+    }
+    const sound = resolveSoundtrack(p, { ...intent }); if (composedNote) sound.reason = `${composedNote}. ${sound.reason}`;
     if (sound.source === 'generated' && p.config.musicVariation) { sound.seed = ((sound.seed ?? 1) + p.config.musicVariation * 37) % 9000 + 1; const { musicBpm } = await import('../studio/sonic.ts'); sound.bpm = musicBpm(sound.mood!, sound.seed); sound.label = `generated ${sound.mood} #${sound.seed}`; }
     st('plan', { status: 'done', detail: `${sound.label}: ${sound.reason}`, progress: 100 });
     if (job.cancelled) throw new Error('Cancelled');
@@ -102,6 +110,7 @@ async function execute(job: Job, opts: { transcribe?: (a: AutoAsset, p: AutoProj
     const hasMedia = p.assets.some((a) => a.kind !== 'audio');
     const grid = { bpm: sound.bpm, beatOffset: sound.beatOffset, mood: sound.mood, seed: sound.seed };
     const mat = cp ? materialize(cp, p.config) : null;
+    if (mat) { const b = bindLogo(mat.scenes, p.config.identityId); mat.scenes = b.scenes; void b.missing; }
     if (mat) decided = [...cp!.decided, ...(mat.dropped.length ? [`${mat.dropped.length} suggested line(s) you did not approve were left out`] : []), ...(mat.used ? [`${mat.used} approved suggested line(s) used`] : [])];
     if (mode === 'idea' || (mode === 'mixed' && !hasMedia)) {
       timeline = composeIdea({ scenes: mat!.scenes, look: mat!.look, config: p.config, profile, intent, grid, seed: stableSeed(p.id), notes: [...cp!.notes, ...(mode === 'mixed' ? ['Mixed media with no uploads was made as Idea-to-Video.'] : [])] });

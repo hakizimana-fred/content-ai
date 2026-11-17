@@ -7,6 +7,9 @@ import { AUDIO_MOODS, STYLES, CAPTION_PRESETS, ENDING_STYLES } from '@/lib/studi
 import { PRODUCTION_STYLES } from '@/lib/studio/styles';
 import type { Identity, IdentityInput } from '@/lib/studio/identity';
 import type { LibraryItem } from '@/lib/studio/library';
+import { BrandPanel } from '@/components/BrandPanel';
+import { SoundStudio } from '@/components/sound/SoundStudio';
+import { usePlayer } from '@/components/sound/player';
 
 export type SoundPick = { mood: string; intensity: string; seed: number; overrides: Record<string, unknown> };
 type Tab = 'sonic' | 'library' | 'identities' | 'models';
@@ -29,7 +32,7 @@ const SonicTab: React.FC<{ onUseSound?: (p: SoundPick) => void; hasVideo: boolea
   const [prompt, setPrompt] = useState(''); const [mood, setMood] = useState('cinematic'); const [intensity, setIntensity] = useState('medium');
   const [seconds, setSeconds] = useState(30); const [variations, setVariations] = useState(2);
   const [busy, setBusy] = useState<string | null>(null); const [err, setErr] = useState<string | null>(null); const [interp, setInterp] = useState<string[]>([]);
-  const [playing, setPlaying] = useState<string | null>(null); const audioRef = useRef<HTMLAudioElement>(null);
+  const player = usePlayer();
   const load = useCallback(() => api('/api/studio/sound').then(setMeta).catch((e) => setErr(e.message)), []);
   useEffect(() => { void load(); }, [load]);
 
@@ -38,14 +41,14 @@ const SonicTab: React.FC<{ onUseSound?: (p: SoundPick) => void; hasVideo: boolea
     try { const d = await api('/api/studio/sound', json('POST', body)); setInterp(d.interpreted ?? []); await load(); if (tag === 'sfx' || tag === 'sig') play(d.items[0].id); }
     catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
   };
-  const play = (id: string) => { const a = audioRef.current; if (!a) return; a.src = `/api/studio/sound/file?id=${id}`; void a.play(); setPlaying(id); };
+  const play = (id: string) => player.toggle({ id, title: meta?.library.find((x) => x.id === id)?.label ?? 'Sound', src: `/api/studio/sound/file?id=${id}` });
+  const playing = player.playing ? player.track?.id ?? null : null;
   const remove = async (id: string) => { try { await api(`/api/studio/sound?id=${id}`, { method: 'DELETE' }); await load(); } catch (e) { setErr((e as Error).message); } };
   if (!meta) return <p className="text-sm text-zinc-400">{err ?? 'Loading…'}</p>;
   const music = meta.library.filter((i) => i.kind === 'music');
 
   return (
     <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-5">
-      <audio ref={audioRef} onEnded={() => setPlaying(null)} className="hidden" />
       <div className="flex flex-col gap-4">
         <div className={card}>
           <SectionTitle hint={`Procedural synthesis on this ${meta.tier}-resource machine: up to ${meta.limits.maxSeconds}s and ${meta.limits.maxVariations} variations. No AI model or sample packs are used.`}>Describe a soundtrack</SectionTitle>
@@ -105,7 +108,7 @@ const blank = (): IdentityInput => ({
 const IdentitiesTab: React.FC = () => {
   const [list, setList] = useState<Identity[]>([]); const [templates, setTemplates] = useState<{ key: string; name: string }[]>([]);
   const [draft, setDraft] = useState<(IdentityInput & { id?: string }) | null>(null); const [err, setErr] = useState<string | null>(null);
-  const [logoV, setLogoV] = useState(0); const [busy, setBusy] = useState(false); const audioRef = useRef<HTMLAudioElement>(null);
+  const [busy, setBusy] = useState(false); const player = usePlayer();
   const load = useCallback(() => api('/api/studio/identities').then((d) => { setList(d.identities); setTemplates(d.templates); }).catch((e) => setErr(e.message)), []);
   useEffect(() => { void load(); }, [load]);
   const save = async () => {
@@ -115,21 +118,11 @@ const IdentitiesTab: React.FC = () => {
   };
   const fromTemplate = async (key: string) => { try { await api('/api/studio/identities', json('POST', { template: key })); await load(); } catch (e) { setErr((e as Error).message); } };
   const del = async (id: string) => { if (!confirm('Delete this identity? Videos already made are not affected.')) return; try { await api(`/api/studio/identities?id=${id}`, { method: 'DELETE' }); await load(); } catch (e) { setErr((e as Error).message); } };
-  const signature = async () => { if (!draft) return; try { const d = await api('/api/studio/sound', json('POST', { signatureSeed: draft.sound.signatureSeed, mood: draft.sound.mood })); const a = audioRef.current; if (a) { a.src = `/api/studio/sound/file?id=${d.items[0].id}`; void a.play(); } } catch (e) { setErr((e as Error).message); } };
-  const uploadLogo = async (file: File | undefined) => {
-    if (!file || !draft?.id) return; setErr(null);
-    try {
-      const r = await fetch(`/api/studio/identities/logo?id=${draft.id}`, { method: 'POST', body: file });
-      const d = await r.json(); if (!r.ok || !d.success) throw new Error(d.error || 'Upload failed');
-      setDraft((cur) => (cur ? { ...cur, logo: d.identity.logo } as never : cur)); setLogoV((v) => v + 1); await load();
-    } catch (e) { setErr((e as Error).message); }
-  };
-  const removeLogo = async () => { if (!draft?.id) return; try { await api(`/api/studio/identities/logo?id=${draft.id}`, { method: 'DELETE' }); setDraft((cur) => { if (!cur) return cur; const c = { ...cur } as Record<string, unknown>; delete c.logo; return c as never; }); await load(); } catch (e) { setErr((e as Error).message); } };
+  const signature = async () => { if (!draft) return; try { const d = await api('/api/studio/sound', json('POST', { signatureSeed: draft.sound.signatureSeed, mood: draft.sound.mood })); player.play({ id: d.items[0].id, title: 'Signature sound', src: `/api/studio/sound/file?id=${d.items[0].id}` }); } catch (e) { setErr((e as Error).message); } };
   const set = (fn: (d: IdentityInput & { id?: string }) => void) => setDraft((d) => { if (!d) return d; const c = JSON.parse(JSON.stringify(d)); fn(c); return c; });
 
   return (
     <div className="flex flex-col gap-4">
-      <audio ref={audioRef} className="hidden" />
       <ErrorBox msg={err} />
       {!draft && (
         <>
@@ -167,16 +160,7 @@ const IdentitiesTab: React.FC = () => {
             <div><label className="text-xs text-zinc-300 block mb-1">End card text</label><input value={draft.ending.text} maxLength={80} onChange={(e) => set((d) => { d.ending.text = e.target.value; })} className="w-full rounded-lg bg-zinc-950/60 border border-white/10 px-3 py-2 text-sm text-white" /></div>
             <div><label className="text-xs text-zinc-300 block mb-1">Brand mark text</label><input value={draft.brand.text} maxLength={40} onChange={(e) => set((d) => { d.brand.text = e.target.value; })} className="w-full rounded-lg bg-zinc-950/60 border border-white/10 px-3 py-2 text-sm text-white" /></div>
             <Select label="Brand mark position" value={draft.brand.corner} onChange={(v) => set((d) => { d.brand.corner = v as never; })}>{[['none', 'Hidden'], ['tl', 'Top left'], ['tr', 'Top right'], ['bl', 'Bottom left'], ['br', 'Bottom right']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</Select>
-            <div className="sm:col-span-2">
-              <label className="text-xs text-zinc-300 block mb-1">Logo image (PNG, JPEG or WebP, up to 2 MB; drawn at the brand mark position)</label>
-              {draft.id ? (
-                <div className="flex items-center gap-3">
-                  {(draft as { logo?: unknown }).logo ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={`/api/studio/identities/logo?id=${draft.id}&v=${logoV}`} alt="logo" className="h-10 w-auto max-w-[120px] rounded bg-zinc-800 p-1" /> : null}
-                  <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => { void uploadLogo(e.target.files?.[0]); e.target.value = ''; }} className="text-xs text-zinc-400 file:mr-3 file:rounded-md file:border-0 file:bg-zinc-800 file:px-3 file:py-1.5 file:text-xs file:text-zinc-200" />
-                  {(draft as { logo?: unknown }).logo ? <button className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-800 hover:bg-zinc-700" onClick={removeLogo}>Remove logo</button> : null}
-                </div>
-              ) : <p className="text-[11px] text-zinc-500">Save the identity first, then edit it to add a logo. Set a brand mark position other than Hidden for the logo to show.</p>}
-            </div>
+            <BrandPanel draft={draft as never} set={set as never} reload={load} onErr={setErr} />
             <Select label="Signature mood" value={draft.sound.mood} onChange={(v) => set((d) => { d.sound.mood = v as never; if (!d.sound.preferredMoods.includes(v as never)) d.sound.preferredMoods.push(v as never); })}>{AUDIO_MOODS.map((s) => <option key={s} value={s}>{label(s)}</option>)}</Select>
             <div className="flex items-end gap-2"><div className="flex-1"><label className="text-xs text-zinc-300 block mb-1">Sound signature seed</label><input type="number" min={1} max={999999} value={draft.sound.signatureSeed} onChange={(e) => set((d) => { d.sound.signatureSeed = Math.max(1, Math.round(Number(e.target.value) || 1)); })} className="w-full rounded-lg bg-zinc-950/60 border border-white/10 px-3 py-2 text-sm text-white" /></div><button className={btn} onClick={signature}><Play className="w-3 h-3 inline mr-1" />Hear</button></div>
             <Slider label="Default music level" value={draft.sound.musicVolume} min={0} max={0.5} step={0.01} onChange={(v) => set((d) => { d.sound.musicVolume = v; })} format={(v) => `${Math.round(v * 100)}%`} />
@@ -271,53 +255,6 @@ const ModelsTab: React.FC = () => {
 
 // ============================== Workspace ==============================
 // ============================== Sound Library ==============================
-type Entry = LibraryItem & { tempo: number | null; energyLevel: 'low' | 'medium' | 'high'; genreLabel: string; descriptionText: string; favourite: boolean; durationSeconds: number };
-const LibraryTab: React.FC = () => {
-  const [items, setItems] = useState<Entry[]>([]); const [cats, setCats] = useState<{ id: string; label: string }[]>([]); const [err, setErr] = useState<string | null>(null);
-  const [cat, setCat] = useState(''); const [energy, setEnergy] = useState(''); const [dur, setDur] = useState(''); const [favOnly, setFavOnly] = useState(false); const [q, setQ] = useState('');
-  const [playing, setPlaying] = useState<string | null>(null); const audioRef = useRef<HTMLAudioElement>(null); const [busy, setBusy] = useState<string | null>(null);
-  const [showImport, setShowImport] = useState(false);
-  const load = useCallback(() => api('/api/studio/sound').then((d) => { setItems((d.library as Entry[]).filter((x) => x.kind === 'music')); setCats(d.categories); }).catch((e) => setErr(e.message)), []);
-  useEffect(() => { void load(); }, [load]);
-  const play = (id: string) => { const a = audioRef.current; if (!a) return; if (playing === id) { a.pause(); setPlaying(null); return; } a.src = `/api/studio/sound/file?id=${id}`; void a.play(); setPlaying(id); };
-  const fav = async (e: Entry) => { try { await api('/api/studio/sound/favourite', json('POST', { id: e.id, on: !e.favourite })); await load(); } catch (x) { setErr((x as Error).message); } };
-  const del = async (e: Entry) => { if (!confirm(`Delete "${e.label}"? This removes the audio file.`)) return; try { await api(`/api/studio/sound?id=${e.id}`, { method: 'DELETE' }); await load(); } catch (x) { setErr((x as Error).message); } };
-  const another = async (e: Entry) => { if (!e.mood) return; setBusy(e.id); setErr(null); try { await api('/api/studio/sound', json('POST', { mood: e.mood, intensity: e.intensity ?? 'medium', seconds: Math.max(10, Math.round(e.seconds)), variations: 1, seed: (e.seed || 1) + 101, prompt: e.prompt })); await load(); } catch (x) { setErr((x as Error).message); } finally { setBusy(null); } };
-  const shown = items.filter((i) => (!cat || i.mood === cat) && (!energy || i.energyLevel === energy) && (!favOnly || i.favourite) && (!dur || (dur === 'short' ? i.seconds < 30 : dur === 'mid' ? i.seconds >= 30 && i.seconds <= 60 : i.seconds > 60)) && (!q || `${i.label} ${i.genreLabel} ${i.descriptionText}`.toLowerCase().includes(q.toLowerCase())));
-  const reg = { ok: items.filter((i) => i.license.commercialOk === true).length, no: items.filter((i) => i.license.commercialOk === false).length, unk: items.filter((i) => i.license.commercialOk === null).length };
-  return (
-    <div className="flex flex-col gap-4">
-      <audio ref={audioRef} className="hidden" onEnded={() => setPlaying(null)} />
-      <ErrorBox msg={err} />
-      <div className={`${card} flex flex-wrap gap-3 items-end`}>
-        <div className="flex-1 min-w-[160px]"><label className="text-xs text-zinc-300 block mb-1">Search</label><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="name, genre, description" className="w-full rounded-lg bg-zinc-950/60 border border-white/10 px-3 py-2 text-sm text-white" /></div>
-        <Select label="Category" value={cat} onChange={setCat}><option value="">All</option>{cats.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</Select>
-        <Select label="Energy" value={energy} onChange={setEnergy}><option value="">Any</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></Select>
-        <Select label="Duration" value={dur} onChange={setDur}><option value="">Any</option><option value="short">Under 30 s</option><option value="mid">30 to 60 s</option><option value="long">Over 60 s</option></Select>
-        <Toggle checked={favOnly} onChange={setFavOnly} label="Favourites only" />
-        <button className={btn} onClick={() => setShowImport((v) => !v)}>{showImport ? 'Close' : 'Import a licensed track'}</button>
-      </div>
-      {showImport && <ImportForm onDone={() => { setShowImport(false); void load(); }} cats={cats} />}
-      <div className="text-[11px] text-zinc-500">Licence registry: {reg.ok} commercial use confirmed · {reg.unk} unconfirmed · {reg.no} not for commercial use. Generated tracks are original synthesis by this software; imported tracks keep exactly the licence you recorded.</div>
-      {shown.length === 0 ? <div className={`${card} text-sm text-zinc-400`}>{items.length === 0 ? 'Your library is empty. Generate tracks in Sonic Studio, or import a licensed track here.' : 'No tracks match these filters.'}</div> : (
-        <ul className="grid gap-2">{shown.map((e) => (
-          <li key={e.id} className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 flex gap-3 items-start">
-            <button aria-label={playing === e.id ? `Pause ${e.label}` : `Play ${e.label}`} onClick={() => play(e.id)} className="mt-0.5 p-2 rounded-full bg-violet-500/20 hover:bg-violet-500/40 shrink-0"><Play className="w-4 h-4 text-white" /></button>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1"><span className="text-sm font-medium text-zinc-100">{e.label}</span>{e.imported && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-400/15 text-sky-200">imported</span>}<span className={`text-[10px] px-1.5 py-0.5 rounded ${e.license.commercialOk === true ? 'bg-emerald-400/15 text-emerald-200' : e.license.commercialOk === false ? 'bg-rose-400/15 text-rose-200' : 'bg-amber-400/15 text-amber-200'}`}>{e.license.commercialOk === true ? 'commercial OK' : e.license.commercialOk === false ? 'not for commercial use' : 'licence unconfirmed'}</span></div>
-              <div className="text-[11px] text-zinc-400 mt-0.5">{e.genreLabel} · {e.mood ? label(e.mood) : 'mood n/a'} · {e.tempo ? `${Math.round(e.tempo)} BPM` : 'tempo unknown'} · {e.energyLevel} energy · {Math.round(e.seconds)} s</div>
-              {e.descriptionText && <div className="text-xs text-zinc-500 mt-1">{e.descriptionText}</div>}
-              <details className="mt-1 text-[11px] text-zinc-500"><summary className="cursor-pointer">Licence</summary><div className="mt-1 space-y-0.5"><div>{e.license.license}</div><div>Attribution: {e.license.attribution}</div>{e.license.source && <div>Source: {e.license.source}</div>}<div>{e.license.note}</div></div></details>
-            </div>
-            <div className="flex flex-col gap-1.5 items-end shrink-0">
-              <div className="flex gap-1.5"><button className={btn} aria-pressed={e.favourite} onClick={() => void fav(e)}>{e.favourite ? '★ Favourite' : '☆ Favourite'}</button><a className={`${btn} no-underline`} href={`/api/studio/sound/file?id=${e.id}&download=1`}>Download</a></div>
-              <div className="flex gap-1.5">{!e.imported && <button className={btn} disabled={busy === e.id} onClick={() => void another(e)}>{busy === e.id ? 'Generating…' : 'Alternative'}</button>}<button className={btn} aria-label={`Delete ${e.label}`} onClick={() => void del(e)}><Trash2 className="w-3.5 h-3.5" /></button></div>
-            </div>
-          </li>))}</ul>)}
-    </div>
-  );
-};
-
 const ImportForm: React.FC<{ onDone: () => void; cats: { id: string; label: string }[] }> = ({ onDone, cats }) => {
   const [f, setF] = useState({ label: '', genre: '', mood: '', description: '', license: '', commercialOk: 'unknown', source: '', attribution: '', energy: '', confirm: false });
   const [file, setFile] = useState<File | null>(null); const [busy, setBusy] = useState(false); const [err, setErr] = useState<string | null>(null);
@@ -362,12 +299,12 @@ export const StudioWorkspace: React.FC<{ onUseSound?: (p: SoundPick) => void; ha
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold text-white tracking-tight flex items-center gap-2"><Wand2 className="w-5 h-5 text-violet-300" />Creative Studio</h1>
         <span className="text-xs text-zinc-500">Everything here runs on this computer, offline.</span>
-        <div className="ml-auto flex gap-1 rounded-full bg-zinc-900/70 border border-white/[0.07] p-1" role="tablist">
+        <div className="ml-auto flex gap-1 rounded-full bg-zinc-900/70 border border-white/[0.07] p-1 max-w-full overflow-x-auto" role="tablist">
           {tabs.map((t) => <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)} className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] font-medium transition-all ${tab === t.id ? 'bg-white text-zinc-950' : 'text-zinc-400 hover:text-white'}`}>{t.icon}{t.label}</button>)}
         </div>
       </div>
       {tab === 'sonic' && <SonicTab onUseSound={onUseSound} hasVideo={hasVideo} />}
-      {tab === 'library' && <LibraryTab />}
+      {tab === 'library' && <SoundStudio onUseSound={onUseSound} hasVideo={hasVideo} />}
       {tab === 'identities' && <IdentitiesTab />}
       {tab === 'models' && <ModelsTab />}
     </div>

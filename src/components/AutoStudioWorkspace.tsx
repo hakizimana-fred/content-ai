@@ -1,5 +1,6 @@
 'use client';
 
+import { usePlayer } from '@/components/sound/player';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Clapperboard, Upload, Trash2, Loader2, Check, AlertTriangle, ArrowLeft, ArrowRight, RefreshCw, Download, Music, Play, Send, Plus, X, CircleDashed, Sparkles } from 'lucide-react';
 import { SectionTitle, Select, Toggle } from '@/components/editor/ui';
@@ -29,6 +30,7 @@ const EXAMPLES = [
   'Turn these photographs into an emotional travel montage with smooth camera movements and atmospheric music.',
   'Create a premium advertisement for this product. Make it look luxurious with sophisticated background music.',
 ];
+const SOUND_STYLES: [string, string][] = [['cinematic', 'Cinematic'], ['corporate', 'Corporate'], ['luxury', 'Luxury'], ['ambient', 'Ambient'], ['electronic', 'Electronic'], ['african_fusion', 'African Fusion'], ['inspirational', 'Inspirational'], ['dramatic', 'Dramatic'], ['minimal', 'Minimal'], ['experimental', 'Experimental']];
 const REFINE_CHIPS = ['Make it more cinematic', 'Change the soundtrack', 'Make the transitions smoother', 'Increase the text size', 'Make the opening more engaging', 'Reduce the background music', 'Use a more energetic soundtrack', 'Remove the second scene'];
 
 const ErrorBox: React.FC<{ msg: string | null; onClose?: () => void }> = ({ msg, onClose }) => msg ? (
@@ -55,7 +57,7 @@ export const AutoStudioWorkspace: React.FC<{ identities?: { id: string; name: st
   const [refineText, setRefineText] = useState(''); const [refineMsg, setRefineMsg] = useState<{ changes: string[]; notes: string[] } | null>(null);
   const [tracks, setTracks] = useState<LibraryEntry[]>([]); const [recs, setRecs] = useState<{ entry: LibraryEntry; score: number; reasons: string[] }[]>([]);
   const [showTracks, setShowTracks] = useState(false); const [dragId, setDragId] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null); const replaceRef = useRef<HTMLInputElement>(null); const replaceTarget = useRef<string | null>(null); const audioRef = useRef<HTMLAudioElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null); const replaceRef = useRef<HTMLInputElement>(null); const replaceTarget = useRef<string | null>(null); const player = usePlayer();
 
   const running = !!p?.render.running;
   const reloadList = useCallback(() => api('/api/auto/projects').then((d) => setList(d.projects)).catch(() => {}), []);
@@ -96,7 +98,7 @@ export const AutoStudioWorkspace: React.FC<{ identities?: { id: string; name: st
     catch (e) { setErr((e as Error).message); }
   };
   const loadTracks = async () => { if (!p) return; try { const [a, b] = await Promise.all([api('/api/studio/sound'), api(`/api/auto/soundtracks?project=${p.id}`)]); setTracks((a.library as LibraryEntry[]).filter((x) => x.kind === 'music')); setRecs(b.recommendations); setShowTracks(true); } catch (e) { setErr((e as Error).message); } };
-  const preview = (id: string) => { const a = audioRef.current; if (!a) return; a.src = `/api/studio/sound/file?id=${id}`; void a.play(); };
+  const preview = (id: string, title = 'Soundtrack') => player.toggle({ id, title, src: `/api/studio/sound/file?id=${id}` });
 
   const used = new Map<string, number>(); p?.timeline?.shots.forEach((s, i) => { if (!used.has(s.assetId)) used.set(s.assetId, i + 1); });
   const left = new Map((p?.timeline?.dropped ?? []).map((d) => [d.assetId, d.why]));
@@ -106,7 +108,6 @@ export const AutoStudioWorkspace: React.FC<{ identities?: { id: string; name: st
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 flex flex-col gap-5">
-      <audio ref={audioRef} className="hidden" />
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2 text-white"><Clapperboard className="w-5 h-5 text-violet-300" /><h1 className="text-lg font-semibold">Auto Studio</h1></div>
         <span className="text-xs text-zinc-500 hidden sm:inline">Add your photos and videos, describe the video, and it is edited for you. Everything runs on this computer.</span>
@@ -184,15 +185,21 @@ export const AutoStudioWorkspace: React.FC<{ identities?: { id: string; name: st
             <div className="flex items-center gap-2.5 sm:col-span-2 lg:col-span-1"><Toggle checked={!!cfg.commercial} onChange={(x) => void save({ commercial: x })} label="Commercial use" /><span className="text-xs text-zinc-300">Commercial use (block assets without a commercial licence)</span></div>
             {identities.length > 0 && <Select label="Creative identity (brand kit)" value={cfg.identityId ?? ''} onChange={(v) => void save({ identityId: v || undefined })}><option value="">None</option>{identities.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}</Select>}
           </div>
+          {cfg.identityId && <p className="text-[11px] text-violet-200/80 mt-2" data-testid="brand-note">The Creative Director will use this brand&apos;s logo, palette and tagline: logo reveal at the start, a branded ending, and video colours taken from your palette. Edit it in Studio → Identities (the logo is never altered).</p>}
           <p className="text-[11px] text-zinc-500 mt-2">Headline and closing text only ever use the words you type: nothing about your business is invented.</p>
           <div className="grid sm:grid-cols-3 gap-3 mt-4">{([['Captions from speech', cfg.captions, 'captions'], ['Keep my media order', cfg.keepOrder, 'keepOrder'], ['Use the local AI model to read my instruction (slower)', !!cfg.useModel, 'useModel']] as const).map(([l, v, k]) => <div key={k} className="flex items-center gap-2.5"><Toggle checked={v} onChange={(x) => void save({ [k]: x })} label={l} /><span className="text-xs text-zinc-300">{l}</span></div>)}</div>
+          {(cfg.audioMode === 'auto' || cfg.audioMode === 'library') && !cfg.soundtrackId && <div className="mt-4 border-t border-white/[0.06] pt-3" data-testid="style-picker">
+            <div className="text-xs text-zinc-300 mb-1">Compose the soundtrack from styles (optional)</div>
+            <div className="flex flex-wrap gap-1.5">{SOUND_STYLES.map(([id, l]) => { const on = (cfg.soundtrackStyles ?? []).includes(id); return <button key={id} type="button" aria-pressed={on} data-testid={`auto-style-${id}`} disabled={running} onClick={() => { const cur = cfg.soundtrackStyles ?? []; void save({ soundtrackStyles: on ? cur.filter((x) => x !== id) : [...cur, id].slice(0, 4) }); }} className={`px-2.5 py-1 rounded-full text-[11px] border ${on ? 'bg-violet-500/30 border-violet-300/60 text-white' : 'border-white/10 text-zinc-300 hover:bg-white/5'}`}>{l}</button>; })}</div>
+            {(cfg.soundtrackStyles?.length ?? 0) > 0 && <div className="flex items-center gap-3 mt-2 text-[11px] text-zinc-400"><label>Alternatives to save: {cfg.soundtrackVariations ?? 1}<input type="range" min={1} max={4} value={cfg.soundtrackVariations ?? 1} onChange={(e) => void save({ soundtrackVariations: Number(e.target.value) })} className="ml-2 align-middle accent-violet-400" aria-label="Soundtrack variations" /></label><span>The engine blends these into one real composition for your video; extra variations are saved to your Sound Library.</span></div>}
+          </div>}
           {(cfg.audioMode === 'library' || cfg.audioMode === 'auto') && <div className="mt-4 border-t border-white/[0.06] pt-3">
             <div className="flex items-center gap-2 flex-wrap"><button className={btn} onClick={() => void loadTracks()} disabled={running}>Browse soundtracks</button>{cfg.soundtrackId && <span className="text-xs text-violet-200">Chosen: {tracks.find((t) => t.id === cfg.soundtrackId)?.label ?? cfg.soundtrackId} <button className="underline ml-1 text-zinc-400" onClick={() => void save({ soundtrackId: null as never })}>clear</button></span>}</div>
             {showTracks && <div className="mt-3 grid gap-2 max-h-72 overflow-auto pr-1">
               {recs.length > 0 && <div className="text-[11px] uppercase tracking-wider text-zinc-500">Recommended for this video</div>}
               {(recs.length ? recs.map((r) => ({ t: r.entry, why: r.reasons.join(', ') })) : tracks.map((t) => ({ t, why: '' }))).map(({ t, why }) => (
                 <div key={t.id} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${cfg.soundtrackId === t.id ? 'border-violet-400/60 bg-violet-500/10' : 'border-white/10'}`}>
-                  <button aria-label={`Preview ${t.label}`} className="p-1.5 rounded-full bg-white/10 hover:bg-white/20" onClick={() => preview(t.id)}><Play className="w-3.5 h-3.5 text-white" /></button>
+                  <button aria-label={`Preview ${t.label}`} className="p-1.5 rounded-full bg-white/10 hover:bg-white/20" onClick={() => preview(t.id, t.label)}><Play className="w-3.5 h-3.5 text-white" /></button>
                   <div className="min-w-0 flex-1"><div className="text-sm text-zinc-100 truncate">{t.favourite ? '★ ' : ''}{t.label}</div><div className="text-[11px] text-zinc-500 truncate">{t.genreLabel} · {t.tempo ? `${Math.round(t.tempo)} BPM` : 'tempo unknown'} · {t.energyLevel} energy · {fmtDur(t.seconds)}{why ? ` · ${why}` : ''}</div></div>
                   <button className={btn} onClick={() => void save({ soundtrackId: t.id, audioMode: 'library' })}>Use</button>
                 </div>))}

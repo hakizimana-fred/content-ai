@@ -178,3 +178,15 @@ Upload kind **3D model (.glb)** in the library: validated by `glb_info.py` (pars
 - Scene-level regenerate exists only through the existing text edits and the plan/approval flow; there is no per-scene "change technique" control yet.
 - AI-assisted generation (local image/illustration/narration models) is not implemented and nothing claims it: no such model is installed.
 - Only GLB (not separate .gltf + bin files).
+
+## Brand Identity, style-composed soundtracks and the Sound Studio
+
+**Brand profiles** reuse the Identity record (Studio → Identities). Added: secondary colour, tagline, `logoStyle` (opening, closing, corner mark, size, reveal, optional 3D). Logos: PNG, SVG, WebP, JPEG. SVGs containing scripts, event handlers, `foreignObject`, entities or external references are refused; safe SVGs are rasterised by the installed Chrome to a transparent PNG (the original SVG is kept). Colours are extracted by k-means over the logo's own visible pixels (`brand_extract.py`) into primary/secondary/accent; when a logo has too few colours the missing roles are derived and the UI says so. Everything is editable.
+
+**Brand Director** (`brand.ts`, deterministic): derives the video palette from the brand (pale brands get a light video; text contrast is enforced), recolours 3D objects, puts the logo on the opening and closing scenes (hero-size when there is no title), adds the tagline to the ending, keeps the corner mark unless turned off, and records each decision in `plan.brand.decisions`. The logo image is never recoloured or stretched (one scale factor, LANCZOS); if its tone matches the background a neutral plate sits behind it. The 3D logo ending is an explicit opt-in. The plan is rebuilt when the brand is edited. `POST /api/auto/brand/preview` renders a real low-resolution frame from the video renderer with unsaved settings.
+
+**Style-composed soundtracks** (`blend.ts`, `sonic-compose.ts`): ten styles act as ingredients. A character (dramatic / elegant / modern / minimal) picks the lead style; tempo compatibility, energy gaps (clashing styles become influences), per-layer entry points, arc, intro/outro and frequency carving are decided by the engine. Variations are different arrangements, not volume-stacked tracks; all output is real synthesis saved to the library. Legacy recipes render exactly as before (the new shaping is opt-in).
+
+**Playback**: one shared `<audio>` (`PlayerProvider`) with a persistent bottom player; only one track plays at a time.
+
+Limits: tempo detection for imported tracks is unchanged; the 3D logo suits simple solid logos; the brand preview is a still frame, not motion.

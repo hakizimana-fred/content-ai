@@ -22,6 +22,7 @@ export function updateIdentity(id: string, input: unknown): { ok: true; identity
   const v = validateIdentity(input);
   if (!v.ok) return v;
   const identity: Identity = { ...(v.identity as IdentityInput), id, createdAt: cur.createdAt, updatedAt: Date.now(), ...(cur.logo ? { logo: cur.logo } : {}) };
+  if (!input || typeof input !== 'object') return { ok: false, errors: ['identity must be an object'] };
   studioDb().prepare('UPDATE identities SET name = ?, json = ?, updated_at = ? WHERE id = ?').run(identity.name, JSON.stringify(identity), identity.updatedAt, id);
   return { ok: true, identity };
 }

@@ -15,6 +15,7 @@ import type { Intent, StyleProfile } from './profiles.ts';
 import type { Soundtrack } from './soundtrack.ts';
 import { STUDIO_DIR } from '../studio/settings.ts';
 import { logoFile } from '../studio/logo-store.ts';
+import { logoWindow } from './brand.ts';
 import { getIdentity } from '../studio/identity-store.ts';
 import { creativeFile, getCreative } from './creative-assets.ts';
 
@@ -87,7 +88,7 @@ async function renderShots(o: RenderOptions): Promise<number> {
           bg: { type: sa && sa.kind !== 'model' ? 'asset' : sc.bg === 'asset' ? 'aurora' : sc.bg, colors: look.colors, accent: look.accent, speed: look.speed, asset: sa?.kind === 'model' ? undefined : sa?.file, assetKind: sa?.kind === 'model' ? undefined : sa?.kind, dim: look.dim },
           text: { color: look.text, font: look.font, upper: look.upper, anim: look.anim, fontFile: FONT_FILE },
           fx: look.fx, motif: look.motif,
-          scene: { kind: sc.kind, composition: sc.composition, steps: sc.steps, three: sc.three && sa?.kind === 'model' ? { ...sc.three, objects: sc.three.objects.map((ob) => (ob.shape === 'glb' ? { ...ob, file: sa.file } : ob)) } : sc.three, scenery: sc.scenery, motion: sc.motion, asset: sa?.kind === 'model' ? undefined : sa?.file, assetKind: sa?.kind === 'model' ? undefined : sa?.kind, title: sc.title, subtitle: sc.subtitle, lines: sc.lines, quote: sc.quote, attribution: sc.attribution, cta: sc.cta, bullets: sc.bullets, stats: sc.stats } };
+          scene: { logo: sc.logo, kind: sc.kind, composition: sc.composition, steps: sc.steps, three: sc.three ? { ...sc.three, objects: sc.three.objects.map((ob) => (ob.shape === 'glb' && sa?.kind === 'model' ? { ...ob, file: sa.file } : ob.shape === 'logo' && sc.logo?.file ? { ...ob, file: sc.logo.file } : ob)) } : sc.three, scenery: sc.scenery, motion: sc.motion, asset: sa?.kind === 'model' ? undefined : sa?.file, assetKind: sa?.kind === 'model' ? undefined : sa?.kind, title: sc.title, subtitle: sc.subtitle, lines: sc.lines, quote: sc.quote, attribution: sc.attribution, cta: sc.cta, bullets: sc.bullets, stats: sc.stats } };
         await run(PY(), [SCRIPT('scene_render.py')], { input: JSON.stringify(job), timeoutMs: 900_000, nice: true, signal: o.signal,
           onStderr: (c) => { const m = [...c.matchAll(/PROGRESS (\d+) (\d+)/g)].pop(); if (m) o.stage('shots', { status: 'running', detail: `scene ${i + 1} of ${t.shots.length}: ${label}, frame ${m[1]} of ${m[2]}`, progress: Math.round(((i + Number(m[1]) / Number(m[2])) / t.shots.length) * 100) }); } });
         if (fs.existsSync(tmp + '.meta.json')) fs.renameSync(tmp + '.meta.json', out + '.meta.json');
@@ -138,7 +139,7 @@ function buildTextAss(o: RenderOptions, words: TimedWord[]): { ass: string | nul
   return { ass, notes };
 }
 
-function joinGraph(t: Timeline, hasAudioIdx: boolean[], grade: string | null, assPath: string | null, fontsDir: string | null, logo: { idx: number; corner: string } | null): { graph: string; vOut: string } {
+function joinGraph(t: Timeline, hasAudioIdx: boolean[], grade: string | null, assPath: string | null, fontsDir: string | null, logo: { idx: number; corner: string; win?: [number, number] | null } | null): { graph: string; vOut: string } {
   const n = t.shots.length, g: string[] = [];
   const fq = (v: string) => v.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
   t.shots.forEach((s, i) => {
@@ -158,7 +159,7 @@ function joinGraph(t: Timeline, hasAudioIdx: boolean[], grade: string | null, as
     const mx = Math.round(t.w * 0.04), my = Math.round(t.h * 0.05), lw = Math.round(t.w * 0.16 / 2) * 2;
     g.push(`[${logo.idx}:v]scale=${lw}:-2,format=rgba,colorchannelmixer=aa=0.92[lg]`);
     if (post.length) { g.push(`[${cur}]${post.join(',')}[gr]`); cur = 'gr'; post.length = 0; }
-    g.push(`[${cur}][lg]overlay=${logo.corner.endsWith('l') ? mx : `main_w-overlay_w-${mx}`}:${logo.corner.startsWith('t') ? my : `main_h-overlay_h-${my}`}:shortest=1[lo]`); cur = 'lo';
+    g.push(`[${cur}][lg]overlay=${logo.corner.endsWith('l') ? mx : `main_w-overlay_w-${mx}`}:${logo.corner.startsWith('t') ? my : `main_h-overlay_h-${my}`}:shortest=1${logo.win ? `:enable='between(t,${f3(logo.win[0])},${f3(logo.win[1])})'` : ''}[lo]`); cur = 'lo';
   }
   if (assPath) post.push(`subtitles='${fq(assPath)}'${fontsDir ? `:fontsdir='${fq(fontsDir)}'` : ''}`);
   g.push(post.length ? `[${cur}]${post.join(',')}[vout]` : `[${cur}]null[vout]`);
@@ -188,10 +189,10 @@ export async function renderProject(o: RenderOptions): Promise<RenderResult> {
   const { ass } = buildTextAss(o, words);
   if (t.text.headline) applied.push('opening headline'); if (t.text.cta) applied.push('closing call to action');
   const gradeName = profile.grade; const grade = gradeName !== 'none' ? GRADE_FILTERS[gradeName] : null; if (grade) applied.push(`${gradeName} colour grade`);
-  const idn = project.config.identityId ? getIdentity(project.config.identityId) : null; const logoPath = idn?.logo ? logoFile(idn.id) : null;
+  const idn = project.config.identityId ? getIdentity(project.config.identityId) : null; const logoPath = idn?.logo && idn.logoStyle?.watermark !== false ? logoFile(idn.id) : null;
   const fontsDirP = path.join(process.cwd(), 'storage', 'fonts'); const fontsDir = fs.existsSync(fontsDirP) ? fontsDirP : null;
   const shotFiles = t.shots.map((s) => path.join(rdir, 'shots', `${shotKey(s, project.assets.find((x) => x.id === s.assetId), t, profile)}.${sceneExt(s)}`));
-  const joinKey = sha({ v: 2, shots: shotFiles.map((f) => path.basename(f)), tr: t.shots.map((s) => [s.start, s.len, s.transitionOut]), ass, grade, logo: logoPath && fs.statSync(logoPath).mtimeMs });
+  const joinKey = sha({ v: 2, shots: shotFiles.map((f) => path.basename(f)), tr: t.shots.map((s) => [s.start, s.len, s.transitionOut]), ass, grade, logo: logoPath && fs.statSync(logoPath).mtimeMs, win: logoPath ? logoWindow(t.shots) : null });
   const joined = path.join(rdir, `joined_${joinKey}.mp4`); const hadJoin = fs.existsSync(joined);
   if (hadJoin) o.stage('join', { status: 'done', detail: 'reused the previous assembly (only audio changed)', progress: 100 });
   else {
@@ -199,7 +200,7 @@ export async function renderProject(o: RenderOptions): Promise<RenderResult> {
     let assPath: string | null = null; if (ass) { assPath = path.join(rdir, `text_${joinKey}.ass`); fs.writeFileSync(assPath, ass, 'utf8'); }
     const inputs = shotFiles.flatMap((f) => ['-i', f]); if (logoPath) inputs.push('-loop', '1', '-i', logoPath);
     const hasA = t.shots.map((s) => s.kind === 'video');
-    const { graph, vOut } = joinGraph(t, hasA, grade, assPath, fontsDir, logoPath ? { idx: t.shots.length, corner: idn!.brand.corner === 'none' ? 'tr' : idn!.brand.corner } : null);
+    const { graph, vOut } = joinGraph(t, hasA, grade, assPath, fontsDir, logoPath ? { idx: t.shots.length, corner: idn!.brand.corner === 'none' ? 'tr' : idn!.brand.corner, win: logoWindow(t.shots) } : null);
     const tmp = joined + '.part.mp4';
     try {
       await ffmpegProgress(['-y', ...inputs, '-filter_complex', graph, '-map', vOut, '-map', '[aout]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-pix_fmt', 'yuv420p', '-r', String(t.fps), '-c:a', 'aac', '-b:a', '256k', '-t', f3(t.total), '-movflags', '+faststart', tmp], t.total,

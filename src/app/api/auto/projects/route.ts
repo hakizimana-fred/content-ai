@@ -31,6 +31,8 @@ export function cleanConfig(b: Record<string, unknown>, base: AutoConfig): { ok:
     }
     c.sceneEdits = out;
   }
+  if (b.soundtrackStyles !== undefined) { const a = b.soundtrackStyles; if (!Array.isArray(a) || a.length > 6 || !a.every((x) => typeof x === 'string' && /^[a-z_]{3,20}$/.test(x))) return { ok: false, error: 'soundtrackStyles must be a short list of style ids.' }; c.soundtrackStyles = a.length ? (a as string[]) : undefined; }
+  if (b.soundtrackVariations !== undefined) { const n = Number(b.soundtrackVariations); if (!Number.isInteger(n) || n < 1 || n > 4) return { ok: false, error: 'soundtrackVariations must be 1 to 4.' }; c.soundtrackVariations = n; }
   if (b.fontAssetId !== undefined) { if (b.fontAssetId !== null && (typeof b.fontAssetId !== 'string' || !/^ca_[a-f0-9]{12}$/.test(b.fontAssetId))) return { ok: false, error: 'invalid font id.' }; c.fontAssetId = (b.fontAssetId as string | null) ?? undefined; }
   if (b.fps !== undefined) { if (b.fps !== 24 && b.fps !== 30) return { ok: false, error: 'fps must be 24 or 30.' }; c.fps = b.fps; }
   if (b.commercial !== undefined) { if (typeof b.commercial !== 'boolean') return { ok: false, error: 'commercial must be true or false.' }; c.commercial = b.commercial; }

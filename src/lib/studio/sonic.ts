@@ -58,6 +58,9 @@ export interface Recipe {
   perc: PercStyle; percLevel: number;
   piano: boolean; pianoLevel: number;
   texture: number; build: boolean; reverb: number; bright: number; // bright: dB tilt on highs
+  /** Arrangement (all optional; absent = previous behaviour). layerIn: fraction of the piece at which a layer enters. arc: overall energy shape. outroSec: fade-out length. */
+  layerIn?: { arp?: number; perc?: number; piano?: number; bass?: number };
+  arc?: 'steady' | 'rise' | 'arch'; outroSec?: number;
 }
 export type Mood = (typeof AUDIO_MOODS)[number];
 
@@ -126,6 +129,7 @@ export async function renderMusic(o: MusicOptions): Promise<Stereo> {
   const bpm = rc.bpm * (1 + ((seed % 5) - 2) * 0.015); // small tempo variation per seed => audibly different variations
   const beat = 60 / bpm, bar = beat * 4, step = beat / 4;
   const total = Math.max(2, o.seconds + 0.5), bars = Math.ceil(total / bar);
+  const arranged = !!(rc.layerIn || rc.arc || rc.outroSec);       // legacy recipes render exactly as before; the arrangement shaping is opt-in
   const scale = SCALES[rc.scale];
   const rootShift = [0, 0, 2, -2, 5, -5][seed % 6]; // key variation per seed
   const root = rc.root + rootShift;
@@ -185,9 +189,12 @@ export async function renderMusic(o: MusicOptions): Promise<Stereo> {
     const t = i / SR;
     // build-up: layers swell over the first ~half; intensity-aware
     const swell = rc.build ? 0.5 + 0.5 * Math.min(1, t / (total * 0.55)) : 1;
+    const ramp = (x: number | undefined) => (x === undefined ? 1 : Math.max(0, Math.min(1, (t - x * total) / Math.max(0.5, total * 0.1))));       // a layer fades in after its entry point
+    const u = t / total, arc = rc.arc === 'rise' ? 0.55 + 0.45 * u : rc.arc === 'arch' ? 0.6 + 0.4 * Math.sin(Math.PI * Math.min(1, u * 1.05)) ** 0.7 : 1;
+    const tail = rc.outroSec ? Math.max(0, Math.min(1, (total - 0.5 - t) / rc.outroSec)) : 1, head = arranged ? Math.min(1, t / 0.4) : 1;
     const pad = (padLf[i] + padRf[i]) * 0.5;
-    const mid = pad * swell + bassF[i] * (0.7 + 0.3 * swell) + arpF[i] * (rc.build ? Math.min(1, t / 6) : 1) * Math.min(1, I) + pnoF[i] + percF[i] * (rc.build ? 0.5 + 0.5 * swell : 1) + texF[i];
-    out.l[i] = mid + (padLf[i] - pad) * 0.8; out.r[i] = mid + (padRf[i] - pad) * 0.8;
+    const mid = (pad * swell + bassF[i] * (0.7 + 0.3 * swell) * ramp(rc.layerIn?.bass) + arpF[i] * (rc.build ? Math.min(1, t / 6) : 1) * Math.min(1, I) * ramp(rc.layerIn?.arp) + pnoF[i] * ramp(rc.layerIn?.piano) + percF[i] * (rc.build ? 0.5 + 0.5 * swell : 1) * ramp(rc.layerIn?.perc) + texF[i]) * arc * tail * head;
+    out.l[i] = mid + (padLf[i] - pad) * 0.8 * arc * tail * head; out.r[i] = mid + (padRf[i] - pad) * 0.8 * arc * tail * head;
   }
   out.l = reverb(out.l, rc.reverb * 0.6, 0.12 + rc.reverb * 0.14, 0.45); out.r = reverb(out.r, rc.reverb * 0.6, 0.12 + rc.reverb * 0.14, 0.45, 1);
   const tilt: [import('./dsp.ts').FilterType, number, number, number][] = [['highshelf', 6000, 0.7, rc.bright], ['lowshelf', 120, 0.7, 1.5], ['hp', 28, 0.7, 0]];

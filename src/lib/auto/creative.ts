@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { applyVisuals, pickDomain } from './visual.ts';
+import { applyBrand, type BrandCtx } from './brand.ts';
 import { checkSuggested, classifyScenes, userSource } from './copy.ts';
 import { ALL_DIRECTIONS, COMPOSITIONS, DIRECTIONS, directionById, lookFromDirection, pickDirection, styleScenes, type Direction } from './directions.ts';
 import { bulletsOf, directIdea, explicitOverrides, stats, subjectPhrase } from './idea.ts';
@@ -15,7 +16,7 @@ import type { ChatRequest } from '../studio/llama-runtime.ts';
  * supplies every fact (numbers, bullet lists, quotes) because those must come from the user, not a model.
  */
 export type Llm = (req: ChatRequest) => Promise<string>;
-export interface PlanOpts { seconds: number; beat: number; mixed: boolean; creativeAssets?: { id: string; kind: string; name: string }[]; llm?: { id: string; run: Llm } | null; llmUnavailable?: string; signal?: AbortSignal }
+export interface PlanOpts { seconds: number; beat: number; mixed: boolean; creativeAssets?: { id: string; kind: string; name: string }[]; llm?: { id: string; run: Llm } | null; llmUnavailable?: string; signal?: AbortSignal; brand?: BrandCtx & { updatedAt?: number } }
 
 const KINDS: SceneKind[] = ['text', 'quote', 'product', 'infographic', 'diagram', 'showcase', 'abstract'];
 const ENDINGS = ['call_to_action', 'title_card', 'fade_out'] as const;
@@ -101,7 +102,7 @@ function asBg(s: SceneSpec, b: BgType): SceneSpec { return { ...s, bg: b }; }
 
 const domainDirection = (prompt: string) => { const d = pickDomain(prompt); return d ? directionById(d.direction) : undefined; };
 export async function buildCreativePlan(prompt: string, cfg: AutoConfig, opts: PlanOpts): Promise<CreativePlan> {
-  const t0 = Date.now(); const src = userSource(prompt, cfg); const subject = subjectPhrase(prompt);
+  const t0 = Date.now(); const src = userSource(prompt, cfg) + (opts.brand ? `\n${opts.brand.name}\n${opts.brand.tagline ?? ''}` : ''); const subject = subjectPhrase(prompt);
   const base = directIdea(prompt, cfg, { seconds: opts.seconds, beat: opts.beat, mixed: opts.mixed, creativeAssets: opts.creativeAssets });
   let source: CreativePlan['source'] = 'keywords', model: string | undefined, ms: number | undefined, fallbackReason = opts.llmUnavailable;
   let mp: ModelPlan | null = null; const notes = [...base.notes], decided = [...base.decided];
@@ -151,7 +152,8 @@ export async function buildCreativePlan(prompt: string, cfg: AutoConfig, opts: P
   });
   finalScenes = styleScenes(finalScenes, dir, false);
   { const v = applyVisuals(finalScenes, prompt, cfg, { hasPhotos: finalScenes.some((s) => s.kind === 'image' || s.kind === 'footage'), mixed: opts.mixed, models: (opts.creativeAssets ?? []).filter((a) => a.kind === 'model'), maxScenes: Math.max(4, Math.floor(opts.seconds / 3.0)) }); finalScenes = v.scenes; decided.push(...v.decided); }
-  const dom = pickDomain(prompt); const look = lookFromDirection(dir, { ...(dom?.palette && !cfg.look?.accent ? dom.palette : {}), ...explicitOverrides(prompt, cfg) });
+  const brandR = opts.brand ? applyBrand(finalScenes, opts.brand) : null; if (brandR) { finalScenes = brandR.scenes; decided.push(...brandR.decided); }
+  const dom = pickDomain(prompt); const look = lookFromDirection(dir, { ...(dom?.palette && !cfg.look?.accent ? dom.palette : {}), ...(brandR?.look ?? {}), ...explicitOverrides(prompt, cfg) });
   if (cfg.look?.bg) finalScenes = finalScenes.map((s) => (s.bg === 'asset' ? s : asBg(s, cfg.look!.bg!)));
   for (const s of finalScenes) { const e = cfg.sceneEdits?.[s.id]; if (e) { Object.assign(s, e); s.prov = { ...(s.prov ?? {}) }; for (const k of Object.keys(e)) if (k in (s.prov ?? {})) (s.prov as Record<string, string>)[k] = 'user'; } }
   // reclassify after edits: edited text is the user's own words
@@ -161,7 +163,8 @@ export async function buildCreativePlan(prompt: string, cfg: AutoConfig, opts: P
   else if (source === 'keywords' && fallbackReason) notes.push(fallbackReason + '; the keyword Director planned this video.');
   decided.push(`direction: ${dir.name} (${dir.blurb})`);
   return { id: `cp_${id()}`, createdAt: Date.now(), source, model, ms: ms ?? Date.now() - t0, fallbackReason, originalPrompt: prompt, concept: concept || `${dir.name} video`, audience, objective, direction: dir.id, mood: mood.length ? mood : [dir.name.toLowerCase()],
-    ending, soundtrack: { mood: sMood, notes: sNotes || 'chosen from the wording of your instruction' }, sfx, scenes: cls2.scenes, look, copy: cls2.copy, notes, decided };
+    ending, soundtrack: { mood: sMood, notes: sNotes || 'chosen from the wording of your instruction' }, sfx, scenes: cls2.scenes, look, copy: cls2.copy, notes, decided,
+    ...(opts.brand ? { brand: { id: opts.brand.id, name: opts.brand.name, decisions: brandR?.decided ?? [], updatedAt: opts.brand.updatedAt ?? 0 } } : {}) };
 }
 
 /** Apply everything that can change after a plan was made: approval, user text edits, removed scenes, look overrides. */

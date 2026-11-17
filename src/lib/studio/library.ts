@@ -12,6 +12,8 @@ export interface LibraryItem {
   id: string; kind: 'music' | 'sfx'; label: string; mood?: string; intensity?: string; sfx?: string; seed: number; seconds: number;
   prompt?: string; overrides?: Record<string, unknown>; createdAt: number; renderMs: number; license: AssetLicense;
   /** Imported (user-supplied) track: stored with its original extension and user-entered metadata. */
+  /** Composed from several style ingredients: which, what character, how they were combined, and the set (group) it was generated with. */
+  styles?: string[]; character?: string; group?: string; arrangement?: { notes: string[]; contributions: Record<string, string>; bpm: number; leader: string };
   imported?: boolean; ext?: string; genre?: string; bpm?: number; beatOffset?: number; energy?: 'low' | 'medium' | 'high'; description?: string;
 }
 /** What the Sound Library shows: stored fields plus derived tempo/energy/genre/description for generated tracks. */
@@ -69,10 +71,10 @@ const GENRE_OF: Record<string, string> = { cinematic: 'Cinematic', corporate: 'C
 export function enrich(it: LibraryItem, fav: Set<string>): LibraryEntry {
   const mood = it.mood as Exclude<Mood, 'none'> | undefined, rc = mood && RECIPES[mood] ? RECIPES[mood] : null;
   const tempo = it.bpm ?? (rc && it.kind === 'music' && !it.imported ? Math.round(musicBpm(mood!, it.seed, (it.overrides ?? undefined) as never) * 10) / 10 : null);
-  const energyScore = rc ? (rc.percLevel * 0.5 + (rc.bpm - 60) / 100 * 0.5) * (it.intensity === 'high' ? 1.25 : it.intensity === 'low' ? 0.7 : 1) : 0.5;
+  const rcx = (it.overrides as { percLevel?: number; bpm?: number } | undefined) ?? {}; const energyScore = rc ? (((rcx.percLevel ?? rc.percLevel)) * 0.5 + (((rcx.bpm ?? rc.bpm)) - 60) / 100 * 0.5) * (it.intensity === 'high' ? 1.25 : it.intensity === 'low' ? 0.7 : 1) : 0.5;
   const energyLevel = it.energy ?? (energyScore > 0.62 ? 'high' : energyScore > 0.38 ? 'medium' : 'low');
   const cat = SOUND_CATEGORIES.find((c) => c.id === mood);
-  return { ...it, tempo, energyLevel, genreLabel: it.genre ?? (mood ? GENRE_OF[mood] ?? mood : it.imported ? 'Imported' : 'Sound effect'),
+  return { ...it, tempo, energyLevel, genreLabel: it.genre ?? (it.styles?.length ? it.styles.join(' + ') : mood ? GENRE_OF[mood] ?? mood : it.imported ? 'Imported' : 'Sound effect'),
     descriptionText: it.description ?? (it.prompt ? `Generated from: "${it.prompt}"` : cat?.description ?? ''), favourite: fav.has(it.id), durationSeconds: it.seconds };
 }
 export function listEntries(): LibraryEntry[] { const fav = favouriteIds(); return listItems().map((i) => enrich(i, fav)); }

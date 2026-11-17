@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Poppins, Montserrat, Inter, Anton, Bebas_Neue } from "next/font/google";
 import "./globals.css";
+import { PlayerProvider } from "@/components/sound/player";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -34,7 +35,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} ${poppins.variable} ${montserrat.variable} ${inter.variable} ${anton.variable} ${bebas.variable} dark h-full antialiased`}
     >
-      <body suppressHydrationWarning className="min-h-full flex flex-col text-zinc-100">{children}</body>
+      <body suppressHydrationWarning className="min-h-full flex flex-col text-zinc-100"><PlayerProvider>{children}</PlayerProvider></body>
     </html>
   );
 }

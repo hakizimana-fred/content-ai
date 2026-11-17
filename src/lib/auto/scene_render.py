@@ -38,6 +38,8 @@ def font(kind, size):
                 continue
     return ImageFont.load_default()
 
+def lum_arr(c): return 0.2126 * c[..., 0] + 0.7152 * c[..., 1] + 0.0722 * c[..., 2]
+
 def hexrgb(h):
     h = h.lstrip("#")
     if len(h) == 3: h = "".join(c * 2 for c in h)
@@ -100,6 +102,7 @@ class Scene:
         self.units = []; self.boxes = []; self.ex = {}
         self.whole = all(abs(float(x['value']) - round(float(x['value']))) < 1e-6 for x in self.sc.get('stats', []))
         self.build3d()
+        self.build_logo()
         self.build_text()
 
     @staticmethod
@@ -766,6 +769,45 @@ class Scene:
             y = (py_ - t * sp_ * 0.7) % 1.1 - 0.05; x = px_ + 0.05 * math.sin(t * 0.6 + py_ * 7); cv2.circle(lay, (int(x * W), int(y * H)), max(4, int(sz_ * 16 * self.s)), tuple(float(v) / 255.0 * 0.5 for v in self.accent), -1, cv2.LINE_AA)
         lay = cv2.GaussianBlur(lay, (0, 0), 5 * self.s); fr[:] = np.clip(fr.astype(np.float32) + lay * 255.0, 0, 255).astype(np.uint8); return fr
 
+    # ======================================================================= brand logo (aspect and pixels preserved; only position/opacity/size animate)
+    def build_logo(self):
+        lg = self.sc.get("logo"); self.lg = None
+        if not lg or not lg.get("file") or lg.get("extrude"): return
+        try: im = Image.open(lg["file"]).convert("RGBA")
+        except Exception as e: print("WARN logo: " + str(e)[:80], file=sys.stderr, flush=True); return
+        al = np.asarray(im)[..., 3]
+        if (al < 250).any():                                     # crop fully transparent margins only, so the logo is sized by its visible content
+            ys, xs = np.nonzero(al > 24)
+            if len(xs): im = im.crop((int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1))
+        P = self.portrait; hero = bool(lg.get("hero")); k = float(lg.get("scale", 1.0))
+        maxw = self.W * ((0.70 if hero else 0.54) if P else (0.42 if hero else 0.30)) * k; maxh = self.H * ((0.20 if hero else 0.12) if P else (0.30 if hero else 0.18)) * k
+        r = min(maxw / im.width, maxh / im.height); im = im.resize((max(2, round(im.width * r)), max(2, round(im.height * r))), Image.LANCZOS)     # one factor for both axes: proportions kept
+        arr = np.asarray(im).astype(np.float32); a = arr[..., 3] / 255.0; rgb = arr[..., :3]
+        cy = self.H * (0.40 if hero else 0.22); cx = self.W / 2; x = cx - im.width / 2; y = cy - im.height / 2
+        # contrast: if the logo's own tone matches the background behind it, sit it on a neutral plate (the logo itself is not recoloured)
+        l_logo = float((lum_arr(rgb) * a).sum() / max(1e-3, a.sum())); bgp = self.bg_frame(1.0)
+        ry0, ry1, rx0, rx1 = max(0, int(y)), min(self.H, int(y + im.height)), max(0, int(x)), min(self.W, int(x + im.width)); l_bg = float(lum_arr(bgp[ry0:ry1, rx0:rx1].astype(np.float32)).mean()) if ry1 > ry0 and rx1 > rx0 else 40.0
+        plate = abs(l_logo - l_bg) < 60; self.lg = dict(rgb=rgb, a=a, x=x, y=y, w=im.width, h=im.height, role=lg.get("role", "opening"), reveal=lg.get("reveal", "sweep"), plate=plate, plate_light=l_logo < 128, t0=0.2 if lg.get("role") != "closing" else 0.35)
+        self.boxes.append(dict(x=x, y=y, w=im.width, h=im.height, text="[logo]", slam=False, logo=True)); self.logo_info = dict(w=im.width, h=im.height, plate=plate, aspect=round(im.width / im.height, 4))
+
+    def draw_logo(self, fr, t):
+        L = self.lg
+        if L is None: return
+        p = (t - L["t0"]) / 0.8
+        if p <= 0: return
+        e = ease_out(min(1.0, p)); rgb, a, x, y = L["rgb"], L["a"], L["x"], L["y"]; h, w = a.shape; sc = 0.93 + 0.07 * e if L["reveal"] != "rise" else 1.0
+        if L["reveal"] == "rise": y += (1 - e) * 46 * self.s
+        if sc < 0.999: nw, nh = max(2, round(w * sc)), max(2, round(h * sc)); rgb = cv2.resize(rgb, (nw, nh), interpolation=cv2.INTER_AREA); a = cv2.resize(a, (nw, nh), interpolation=cv2.INTER_AREA); x += (w - nw) / 2; y += (h - nh) / 2
+        if L["reveal"] == "sweep" and 0.45 < (t - L["t0"]) < 1.45:   # a moving light band, visible only on the logo's own pixels; the logo is unchanged when it ends
+            ww = rgb.shape[1]; xs = (np.arange(ww, dtype=np.float32) - ww * (((t - L["t0"]) - 0.45) / 1.0) * 1.4 + ww * 0.2) / (ww * 0.12); band = np.exp(-xs ** 2)[None, :, None] * 70.0; rgb = np.clip(rgb + band, 0, 255)
+        if L["plate"]:
+            pad = int(0.16 * h); x0, y0, x1, y1 = int(x - pad * 1.6), int(y - pad), int(x + a.shape[1] + pad * 1.6), int(y + a.shape[0] + pad); col = (246, 246, 248) if L["plate_light"] else (14, 14, 22)
+            ov = fr.copy(); cv2.rectangle(ov, (x0, y0), (x1, y1), col, -1); r_ = int(min(y1 - y0, x1 - x0) * 0.22)
+            msk = np.zeros(fr.shape[:2], np.uint8); cv2.rectangle(msk, (x0 + r_, y0), (x1 - r_, y1), 255, -1); cv2.rectangle(msk, (x0, y0 + r_), (x1, y1 - r_), 255, -1)
+            for cx_, cy_ in ((x0 + r_, y0 + r_), (x1 - r_, y0 + r_), (x0 + r_, y1 - r_), (x1 - r_, y1 - r_)): cv2.circle(msk, (cx_, cy_), r_, 255, -1)
+            m = (cv2.GaussianBlur(msk, (0, 0), 1.2).astype(np.float32) / 255.0)[..., None] * 0.9 * e; fr[:] = np.clip(fr * (1 - m) + np.array(col, np.float32) * m, 0, 255).astype(np.uint8)
+        self.blit_arr(fr, rgb, a, x, y, e)
+
     def frame(self, i):
         t = i / self.fps; k = self.sc["kind"]
         fr = np.ascontiguousarray(self.bg_frame(t)); cam = self.cam(t)
@@ -773,6 +815,7 @@ class Scene:
         if k == "photo25d": fr = np.ascontiguousarray(self.photo25(fr, t))
         if self.th: fr = np.ascontiguousarray(self.draw3d(fr, t))
         self.shape_layer(fr, t)
+        self.draw_logo(fr, t)
         for u in self.units: self.blit(fr, u, t, cam)
         return self.post(fr, t)
 
@@ -795,7 +838,7 @@ def main():
         pass
     if enc.wait() != 0:
         sys.exit("ffmpeg failed while encoding the scene")
-    json.dump(dict(boxes=sc.boxes, fonts=sorted(FONT_USED), peakRssMB=peak_rss_mb(), frames=sc.N, w=sc.W, h=sc.H, engine3d=(dict(faces=sc.stat3['faces'], msPerFrame=round(sc.stat3['ms'] / max(1, sc.stat3['frames']), 1), internal=[sc.R3.W, sc.R3.H]) if sc.th else None), depth25=bool(sc.sc.get('scenery') or sc.sc.get('kind') == 'photo25d')), open(job["out"] + ".meta.json", "w"))
+    json.dump(dict(boxes=sc.boxes, fonts=sorted(FONT_USED), peakRssMB=peak_rss_mb(), frames=sc.N, w=sc.W, h=sc.H, engine3d=(dict(faces=sc.stat3['faces'], msPerFrame=round(sc.stat3['ms'] / max(1, sc.stat3['frames']), 1), internal=[sc.R3.W, sc.R3.H]) if sc.th else None), logo=getattr(sc, 'logo_info', None), depth25=bool(sc.sc.get('scenery') or sc.sc.get('kind') == 'photo25d')), open(job["out"] + ".meta.json", "w"))
 
 if __name__ == "__main__":
     main()

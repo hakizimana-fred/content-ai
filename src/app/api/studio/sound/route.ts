@@ -3,11 +3,13 @@ import { detectHardware } from '@/lib/studio/hardware';
 import { SFX_KINDS, SFX_LABELS, SOUND_CATEGORIES, SOUND_LICENSE, parseSoundPrompt, renderMusic, renderSfx, renderSignature, type SfxKind } from '@/lib/studio/sonic';
 import { deleteItem, limitsForTier, listEntries, saveItem, withRenderLock } from '@/lib/studio/library';
 import { AUDIO_MOODS, INTENSITIES } from '@/lib/studio/plan';
+import { blendStyles, characterTitle, isStyle, variationPlan, STYLES, STYLE_LABEL, STYLE_BLURB } from '@/lib/studio/blend';
+import crypto from 'node:crypto';
 
 export async function GET() {
   const hw = detectHardware();
   return NextResponse.json({
-    success: true, categories: SOUND_CATEGORIES, sfx: SFX_KINDS.map((k) => ({ id: k, label: SFX_LABELS[k] })), license: SOUND_LICENSE,
+    success: true, categories: SOUND_CATEGORIES, styles: STYLES.map((s) => ({ id: s, label: STYLE_LABEL[s], blurb: STYLE_BLURB[s] })), sfx: SFX_KINDS.map((k) => ({ id: k, label: SFX_LABELS[k] })), license: SOUND_LICENSE,
     limits: limitsForTier(hw.tier), tier: hw.tier, library: listEntries(),
   });
 }
@@ -32,6 +34,21 @@ export async function POST(request: NextRequest) {
         const t0 = Date.now(), seed = Number.isInteger(b.seed) ? (b.seed as number) : 1, kind = b.sfx as SfxKind;
         const item = saveItem(renderSfx(kind, seed), { kind: 'sfx', label: SFX_LABELS[kind], sfx: kind, seed, seconds: 0, renderMs: Date.now() - t0 });
         return NextResponse.json({ success: true, items: [item] });
+      }
+      if (Array.isArray(b.styles)) {                     // composition from several style ingredients
+        const styles = b.styles.filter(isStyle); if (!styles.length || styles.length !== b.styles.length) return NextResponse.json({ success: false, error: 'styles must be a list of known style ids.' }, { status: 400 });
+        const secs = Math.round(Number(b.seconds ?? 30)), n = Math.round(Number(b.variations ?? 4));
+        if (!Number.isFinite(secs) || secs < 5 || secs > lim.maxSeconds) return NextResponse.json({ success: false, error: `seconds must be 5-${lim.maxSeconds} on this ${hw.tier}-resource machine.` }, { status: 400 });
+        if (!Number.isFinite(n) || n < 1 || n > lim.maxVariations) return NextResponse.json({ success: false, error: `variations must be 1-${lim.maxVariations} on this ${hw.tier}-resource machine.` }, { status: 400 });
+        const baseSeed = Number.isInteger(b.seed) ? (b.seed as number) : Math.floor(Math.random() * 9000) + 1, group = crypto.randomBytes(5).toString('hex'), items = [], MOOD_OF: Record<string, string> = { ambient: 'minimal', dramatic: 'suspense', experimental: 'technology' };
+        variationPlan(n).forEach(() => {}); const plan = variationPlan(n);
+        for (let i = 0; i < n; i++) {
+          const bl = blendStyles(styles, plan[i], i), seed = baseSeed + i * 7, t0 = Date.now(), intensity = (INTENSITIES as readonly string[]).includes(b.intensity as string) ? (b.intensity as string) : 'medium';
+          const audio = await renderMusic({ mood: (MOOD_OF[bl.leader] ?? bl.leader) as never, intensity: intensity as never, seconds: secs, seed, overrides: bl.recipe });
+          items.push(saveItem(audio, { kind: 'music', label: `${bl.label}${n > 4 ? ` #${i + 1}` : ''}`, mood: MOOD_OF[bl.leader] ?? bl.leader, intensity, seed, seconds: secs, overrides: bl.recipe as unknown as Record<string, unknown>, renderMs: Date.now() - t0,
+            styles: styles.map((s) => STYLE_LABEL[s]), character: characterTitle(bl.character), group, arrangement: { notes: bl.notes, contributions: bl.contributions, bpm: bl.bpm, leader: STYLE_LABEL[bl.leader] } }));
+        }
+        return NextResponse.json({ success: true, items, group });
       }
       const prompt = typeof b.prompt === 'string' ? b.prompt.slice(0, 500) : '';
       let mood = b.mood as string | undefined, intensity = b.intensity as string | undefined, overrides = {}, matched: string[] = [];

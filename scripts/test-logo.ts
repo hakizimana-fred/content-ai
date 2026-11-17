@@ -20,13 +20,13 @@ assert.equal(sniffImage(Buffer.from('<svg onload=alert(1)>')), null, 'svg/html i
 
 const c = createIdentity({ ...IDENTITY_TEMPLATES.africa_unfiltered, brand: { text: 'X', corner: 'tr' } }); assert(c.ok); const id = c.ok ? c.identity.id : '';
 assert.equal(logoFile(id), null, 'no logo yet');
-assert.equal((saveLogo('idn_nope', png) as { status: number }).status, 404);
-assert.equal((saveLogo(id, Buffer.from('not an image at all, 20+ bytes long')) as { status: number }).status, 415, 'non-image rejected by content, not by name');
-assert.equal((saveLogo(id, Buffer.alloc(MAX_LOGO_BYTES + 1, 1)) as { status: number }).status, 413, 'size limit');
-assert.equal((saveLogo(id, Buffer.alloc(0)) as { status: number }).status, 400);
-assert.equal((saveLogo('../../etc/passwd', png) as { status: number }).status, 404, 'path traversal in id');
-assert(saveLogo(id, png).ok); const f1 = logoFile(id)!; assert(f1.endsWith(`${id}.png`) && fs.existsSync(f1)); assert.equal(getIdentity(id)?.logo?.ext, 'png');
-assert(saveLogo(id, jpg).ok); assert(!fs.existsSync(f1), 'replacing a logo removes the old file'); assert(logoFile(id)!.endsWith('.jpg'));
+assert.equal(((await saveLogo('idn_nope', png)) as { status: number }).status, 404);
+assert.equal(((await saveLogo(id, Buffer.from('not an image at all, 20+ bytes long'))) as { status: number }).status, 415, 'non-image rejected by content, not by name');
+assert.equal(((await saveLogo(id, Buffer.alloc(MAX_LOGO_BYTES + 1, 1))) as { status: number }).status, 413, 'size limit');
+assert.equal(((await saveLogo(id, Buffer.alloc(0))) as { status: number }).status, 400);
+assert.equal(((await saveLogo('../../etc/passwd', png)) as { status: number }).status, 404, 'path traversal in id');
+assert((await saveLogo(id, png)).ok); const f1 = logoFile(id)!; assert(f1.endsWith(`${id}.png`) && fs.existsSync(f1)); assert.equal(getIdentity(id)?.logo?.ext, 'png');
+assert((await saveLogo(id, jpg)).ok); assert(!fs.existsSync(f1), 'replacing a logo removes the old file'); assert(logoFile(id)!.endsWith('.jpg'));
 const u = updateIdentity(id, { ...IDENTITY_TEMPLATES.africa_unfiltered, name: 'Edited', brand: { text: 'X', corner: 'tr' } }); assert(u.ok && u.identity.logo?.ext === 'jpg', 'editing an identity keeps its logo');
 
 // plan -> production: logo replaces the text brand mark in the same corner

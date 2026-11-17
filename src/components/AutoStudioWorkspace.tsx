@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Clapperboard, Upload, Trash2, Loader2, Check, AlertTriangle, ArrowLeft, ArrowRight, RefreshCw, Download, Music, Play, Send, Plus, X, CircleDashed, Sparkles } from 'lucide-react';
 import { SectionTitle, Select, Toggle } from '@/components/editor/ui';
+import { ModePicker, CreativeLibrary, SceneEditor, CreativePlanPanel, QcPanel, TypographyPicker } from '@/components/AutoIdeaPanels';
 import type { AutoAsset, AutoConfig, AutoProject, StageState } from '@/lib/auto/types';
 import type { LibraryEntry } from '@/lib/studio/library';
 
@@ -18,6 +19,11 @@ async function api<T = any>(url: string, init?: RequestInit): Promise<T> { // es
 }
 const json = (method: string, body: unknown): RequestInit => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 const fmtDur = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+const IDEA_EXAMPLES = [
+  'Create a 30-second futuristic advertisement for an AI technology company. Use dark backgrounds, elegant animated typography, electronic background music and cinematic transitions.',
+  'Make a 20-second elegant luxury brand teaser. "Timeless Craft" in the title, gold accents, calm piano-like atmosphere.',
+  'Create an energetic 15-second product announcement. Features: fast setup, simple pricing, friendly support. 3x faster checkout.',
+];
 const EXAMPLES = [
   'Create a beautiful 30-second promotional video for a restaurant. Make it energetic, modern and appetising, with an upbeat African-inspired soundtrack.',
   'Turn these photographs into an emotional travel montage with smooth camera movements and atmospheric music.',
@@ -86,7 +92,7 @@ export const AutoStudioWorkspace: React.FC<{ identities?: { id: string; name: st
   const cancel = async () => { if (!p) return; try { await api(`/api/auto/render?project=${p.id}`, { method: 'DELETE' }); } catch (e) { setErr((e as Error).message); } };
   const doRefine = async (text: string) => {
     if (!p || !text.trim()) return; setErr(null); setRefineMsg(null);
-    try { const d = await api(`/api/auto/refine?project=${p.id}`, json('POST', { instruction: text })); setP(d.project); setCfg(d.project.config); setRefineMsg({ changes: d.changes, notes: d.notes }); if (d.understood) setRefineText(''); if (d.startError) setErr(d.startError); }
+    try { const d = await api(`/api/auto/refine?project=${p.id}`, json('POST', { instruction: text })); setP(d.project); setCfg(d.project.config); setRefineMsg({ changes: d.changes, notes: d.notes }); if (d.understood) setRefineText(''); if (d.startError) setErr(d.startError); if (d.started) await load(p.id); }
     catch (e) { setErr((e as Error).message); }
   };
   const loadTracks = async () => { if (!p) return; try { const [a, b] = await Promise.all([api('/api/studio/sound'), api(`/api/auto/soundtracks?project=${p.id}`)]); setTracks((a.library as LibraryEntry[]).filter((x) => x.kind === 'music')); setRecs(b.recommendations); setShowTracks(true); } catch (e) { setErr((e as Error).message); } };
@@ -95,7 +101,8 @@ export const AutoStudioWorkspace: React.FC<{ identities?: { id: string; name: st
   const used = new Map<string, number>(); p?.timeline?.shots.forEach((s, i) => { if (!used.has(s.assetId)) used.set(s.assetId, i + 1); });
   const left = new Map((p?.timeline?.dropped ?? []).map((d) => [d.assetId, d.why]));
   const media = p?.assets.filter((a) => a.kind !== 'audio') ?? [];
-  const canCreate = !!p && !!cfg && media.length > 0 && cfg.prompt.trim().length > 0 && !running && !uploading;
+  const needsMedia = !!cfg && ((cfg.mode ?? 'video') === 'video' || cfg.mode === 'image');
+  const canCreate = !!p && !!cfg && (!needsMedia || media.length > 0) && cfg.prompt.trim().length > 0 && !running && !uploading;
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 flex flex-col gap-5">
@@ -118,6 +125,9 @@ export const AutoStudioWorkspace: React.FC<{ identities?: { id: string; name: st
           <button className={`${primary} mx-auto`} onClick={() => void create()}><Plus className="w-4 h-4" />Start a new video</button>
         </div>
       ) : (<>
+        <ModePicker mode={cfg.mode ?? 'video'} disabled={running} onChange={(m) => void save({ mode: m })} />
+        {(cfg.mode ?? 'video') === 'idea' ? <div className={`${card} text-xs text-zinc-400`}>Idea-to-Video needs no uploads: scenes, animation, typography and sound are generated on this computer from your description. Every word on screen comes from your instruction or the fields below.</div> : null}
+        {(cfg.mode ?? 'video') !== 'idea' && <>
         {/* 1. MEDIA */}
         <section className={card} aria-label="Media tray">
           <div className="flex items-center justify-between mb-2"><SectionTitle hint="Photos (JPEG, PNG, WebP), videos (MP4, MOV, WebM) and optional music (MP3, WAV, M4A). Drag to reorder.">1 · Your media</SectionTitle>
@@ -149,13 +159,16 @@ export const AutoStudioWorkspace: React.FC<{ identities?: { id: string; name: st
           {p.assets.some((a) => a.kind === 'audio') && <p className="text-[11px] text-zinc-500 mt-2">Your uploaded audio is used as the soundtrack. Confirm you hold the rights to it.</p>}
         </section>
 
+        </>}
+        {((cfg.mode ?? 'video') === 'idea' || cfg.mode === 'mixed') && <CreativeLibrary selected={cfg.creativeAssetIds ?? []} disabled={running} onSelect={(ids) => void save({ creativeAssetIds: ids })} />}
         {/* 2. INSTRUCTION */}
         <section className={card} aria-label="Creative instruction">
           <SectionTitle hint="Say what you want in your own words: the mood, the music, the style.">2 · Describe the video</SectionTitle>
-          <textarea value={cfg.prompt} onChange={(e) => setCfg({ ...cfg, prompt: e.target.value })} onBlur={() => void save({ prompt: cfg.prompt })} disabled={running} rows={4} maxLength={1500} placeholder={EXAMPLES[0]} aria-label="Creative instruction" className={`${input} text-base leading-relaxed resize-y`} />
-          <div className="flex flex-wrap gap-2 mt-2">{EXAMPLES.map((e, i) => <button key={i} disabled={running} className="text-[11px] px-2.5 py-1 rounded-full border border-white/10 text-zinc-400 hover:text-white hover:border-white/25 text-left" onClick={() => { setCfg({ ...cfg, prompt: e }); void save({ prompt: e }); }}>{['Restaurant promo', 'Travel montage', 'Luxury product ad'][i]}</button>)}</div>
+          <textarea value={cfg.prompt} onChange={(e) => setCfg({ ...cfg, prompt: e.target.value })} onBlur={() => void save({ prompt: cfg.prompt })} disabled={running} rows={4} maxLength={1500} placeholder={(cfg.mode === 'idea' ? IDEA_EXAMPLES : EXAMPLES)[0]} aria-label="Creative instruction" className={`${input} text-base leading-relaxed resize-y`} />
+          <div className="flex flex-wrap gap-2 mt-2">{(cfg.mode === 'idea' ? IDEA_EXAMPLES : EXAMPLES).map((e, i) => <button key={i} disabled={running} className="text-[11px] px-2.5 py-1 rounded-full border border-white/10 text-zinc-400 hover:text-white hover:border-white/25 text-left" onClick={() => { setCfg({ ...cfg, prompt: e }); void save({ prompt: e }); }}>{(cfg.mode === 'idea' ? ['Futuristic AI ad', 'Luxury teaser', 'Product announcement'] : ['Restaurant promo', 'Travel montage', 'Luxury product ad'])[i]}</button>)}</div>
         </section>
 
+        {((cfg.mode ?? 'video') === 'idea' || cfg.mode === 'mixed') && <CreativePlanPanel project={p} disabled={running} onChanged={() => load(p.id)} />}
         {/* 3. CONFIG */}
         <section className={card} aria-label="Production settings">
           <SectionTitle>3 · Settings</SectionTitle>
@@ -166,10 +179,13 @@ export const AutoStudioWorkspace: React.FC<{ identities?: { id: string; name: st
             <Select label="Audio" value={cfg.audioMode} onChange={(v) => void save({ audioMode: v as AutoConfig['audioMode'] })}><option value="auto">Automatic soundtrack selection</option><option value="library">Choose from the sound library</option><option value="generate">Generate a soundtrack</option><option value="original">Original audio only</option><option value="none">No background music</option></Select>
             <div><label className="text-xs text-zinc-300 block mb-1" htmlFor="as-head">Opening headline (optional)</label><input id="as-head" className={input} maxLength={80} disabled={running} value={cfg.headline ?? ''} placeholder="Your own words" onChange={(e) => setCfg({ ...cfg, headline: e.target.value })} onBlur={() => void save({ headline: cfg.headline ?? '' })} /></div>
             <div><label className="text-xs text-zinc-300 block mb-1" htmlFor="as-cta">Closing message (optional)</label><input id="as-cta" className={input} maxLength={80} disabled={running} value={cfg.cta ?? ''} placeholder="e.g. Book your table today" onChange={(e) => setCfg({ ...cfg, cta: e.target.value })} onBlur={() => void save({ cta: cfg.cta ?? '' })} /></div>
+            {((cfg.mode ?? 'video') === 'idea' || cfg.mode === 'mixed') && <TypographyPicker value={cfg.fontAssetId} disabled={running} onChange={(id) => void save({ fontAssetId: (id ?? null) as never })} />}
+            <Select label="Frame rate" value={String(cfg.fps ?? 30)} onChange={(v) => void save({ fps: Number(v) as 24 | 30 })}><option value="30">30 fps (smooth)</option><option value="24">24 fps (cinematic, faster to render)</option></Select>
+            <div className="flex items-center gap-2.5 sm:col-span-2 lg:col-span-1"><Toggle checked={!!cfg.commercial} onChange={(x) => void save({ commercial: x })} label="Commercial use" /><span className="text-xs text-zinc-300">Commercial use (block assets without a commercial licence)</span></div>
             {identities.length > 0 && <Select label="Creative identity (brand kit)" value={cfg.identityId ?? ''} onChange={(v) => void save({ identityId: v || undefined })}><option value="">None</option>{identities.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}</Select>}
           </div>
           <p className="text-[11px] text-zinc-500 mt-2">Headline and closing text only ever use the words you type: nothing about your business is invented.</p>
-          <div className="grid sm:grid-cols-3 gap-3 mt-4"><Toggle checked={cfg.captions} onChange={(v) => void save({ captions: v })} label="Captions from speech" /><Toggle checked={cfg.keepOrder} onChange={(v) => void save({ keepOrder: v })} label="Keep my media order" /><Toggle checked={!!cfg.useModel} onChange={(v) => void save({ useModel: v })} label="Use the local AI model to read my instruction (slower)" /></div>
+          <div className="grid sm:grid-cols-3 gap-3 mt-4">{([['Captions from speech', cfg.captions, 'captions'], ['Keep my media order', cfg.keepOrder, 'keepOrder'], ['Use the local AI model to read my instruction (slower)', !!cfg.useModel, 'useModel']] as const).map(([l, v, k]) => <div key={k} className="flex items-center gap-2.5"><Toggle checked={v} onChange={(x) => void save({ [k]: x })} label={l} /><span className="text-xs text-zinc-300">{l}</span></div>)}</div>
           {(cfg.audioMode === 'library' || cfg.audioMode === 'auto') && <div className="mt-4 border-t border-white/[0.06] pt-3">
             <div className="flex items-center gap-2 flex-wrap"><button className={btn} onClick={() => void loadTracks()} disabled={running}>Browse soundtracks</button>{cfg.soundtrackId && <span className="text-xs text-violet-200">Chosen: {tracks.find((t) => t.id === cfg.soundtrackId)?.label ?? cfg.soundtrackId} <button className="underline ml-1 text-zinc-400" onClick={() => void save({ soundtrackId: null as never })}>clear</button></span>}</div>
             {showTracks && <div className="mt-3 grid gap-2 max-h-72 overflow-auto pr-1">
@@ -188,8 +204,9 @@ export const AutoStudioWorkspace: React.FC<{ identities?: { id: string; name: st
         {/* CREATE */}
         <div className="flex items-center gap-3 flex-wrap">
           <button className={primary} disabled={!canCreate} onClick={() => void create_()}>{running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}{running ? 'Making your video…' : p.render.outputFile ? 'Create again' : 'CREATE'}</button>
+          <div className="flex rounded-lg border border-white/10 overflow-hidden text-xs" role="radiogroup" aria-label="Render quality">{([['preview', 'Preview (fast, half size)'], ['final', 'Final (full size)']] as const).map(([q, l]) => <button key={q} role="radio" aria-checked={(cfg.quality ?? 'final') === q} disabled={running} onClick={() => void save({ quality: q })} className={`px-3 py-2 ${(cfg.quality ?? 'final') === q ? 'bg-violet-500/25 text-white' : 'text-zinc-400 hover:text-white'}`}>{l}</button>)}</div>
           {running && <button className={btn} onClick={() => void cancel()}>Cancel</button>}
-          {!canCreate && !running && <span className="text-xs text-zinc-500">{media.length === 0 ? 'Add at least one photo or video.' : !cfg.prompt.trim() ? 'Describe the video you want.' : ''}</span>}
+          {!canCreate && !running && <span className="text-xs text-zinc-500">{needsMedia && media.length === 0 ? 'Add at least one photo or video, or switch to Idea-to-Video.' : !cfg.prompt.trim() ? 'Describe the video you want.' : ''}</span>}
         </div>
 
         {/* PROGRESS */}
@@ -207,9 +224,12 @@ export const AutoStudioWorkspace: React.FC<{ identities?: { id: string; name: st
             <div className="min-w-0 flex flex-col gap-3">
               <div className="flex flex-wrap gap-2 items-center"><a className={`${primary} !py-2 no-underline`} href={`${p.render.outputUrl}&download=1`}><Download className="w-4 h-4" />Export MP4</a><span className="text-xs text-zinc-500">{p.render.outputSeconds?.toFixed(1)} s · {p.timeline?.w}×{p.timeline?.h}</span></div>
               {p.timeline?.notes.map((n, i) => <div key={i} className="text-xs text-amber-200/90 flex gap-1.5"><AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />{n}</div>)}
+              {p.render.qc && <QcPanel qc={p.render.qc} />}
               {p.render.applied && <details open className="text-xs"><summary className="cursor-pointer text-zinc-300 mb-1">What was done</summary><ul className="list-disc ml-5 text-zinc-400 space-y-0.5">{p.render.applied.map((a, i) => <li key={i}>{a}</li>)}</ul></details>}
               {p.render.skipped && p.render.skipped.length > 0 && <details className="text-xs"><summary className="cursor-pointer text-amber-200/90 mb-1">What could not be done</summary><ul className="list-disc ml-5 text-zinc-400 space-y-0.5">{p.render.skipped.map((a, i) => <li key={i}>{a}</li>)}</ul></details>}
-              {p.timeline && <details className="text-xs"><summary className="cursor-pointer text-zinc-300 mb-1">Why each shot was chosen</summary><ol className="ml-5 list-decimal text-zinc-400 space-y-1">{p.timeline.shots.map((s) => <li key={s.id}><span className="text-zinc-200">{p.assets.find((a) => a.id === s.assetId)?.name}</span> · {s.len.toFixed(1)} s{s.motion ? ` · ${s.motion.replace('_', ' ')}` : ''}{s.transitionOut ? ` → ${s.transitionOut.type}` : ''}<div className="text-zinc-500">{s.why}</div></li>)}</ol></details>}
+              {cfg.quality === 'preview' && p.timeline && <div className="flex items-center gap-2 flex-wrap rounded-lg border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2 text-xs text-amber-100">This is a half-resolution preview. <button className={btn} onClick={async () => { await save({ quality: 'final' }); await api(`/api/auto/render?project=${p.id}`, { method: 'POST' }).catch((e) => setErr(e.message)); await load(p.id); }}>Render final</button></div>}
+              {p.timeline && p.timeline.shots.some((s) => s.scene) && <SceneEditor key={p.render.outputFile} scenes={p.timeline.shots.filter((s) => s.scene).map((s) => s.scene!)} disabled={running} onApply={async (edits) => { const merged = { ...(cfg.sceneEdits ?? {}) }; for (const [k, v] of Object.entries(edits)) merged[k] = { ...(merged[k] ?? {}), ...v }; await save({ sceneEdits: merged }); await api(`/api/auto/render?project=${p.id}`, { method: 'POST' }).catch((e) => setErr(e.message)); await load(p.id); }} />}
+              {p.timeline && <details className="text-xs"><summary className="cursor-pointer text-zinc-300 mb-1">Why each shot was chosen</summary><ol className="ml-5 list-decimal text-zinc-400 space-y-1">{p.timeline.shots.map((s) => <li key={s.id}><span className="text-zinc-200">{p.assets.find((a) => a.id === s.assetId)?.name ?? (s.scene ? `${s.scene.kind} scene${s.scene.title ? `: ${s.scene.title}` : ''}` : 'media')}</span> · {s.len.toFixed(1)} s{s.motion ? ` · ${s.motion.replace('_', ' ')}` : ''}{s.transitionOut ? ` → ${s.transitionOut.type}` : ''}<div className="text-zinc-500">{s.why}</div></li>)}</ol></details>}
             </div>
           </div>
           {/* REFINE */}

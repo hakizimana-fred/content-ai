@@ -50,6 +50,7 @@ export function interpretIntent(prompt: string, styleChoice: StyleChoice, planSt
   }
   let mood: Intent['mood'] = null;
   const moods: [RegExp, NonNullable<Intent['mood']>][] = [
+    [/(electronic|edm|synth(wave)?|techno)\s+(background\s+)?(music|soundtrack|track|beat)|(music|soundtrack).{0,20}(electronic|edm|synth(wave)?|techno)/, 'electronic'],
     [/african|afro|afrobeat|amapiano/, 'african_fusion'], [/luxur|elegant|sophisticated|premium|upscale/, 'luxury'], [/emotional|heartfelt|nostalg|wedding|sentimental|sad|memor/, 'emotional'],
     [/travel|trip|holiday|vacation|journey|adventure|atmospher/, 'travel'], [/suspens|tense|thriller|mystery/, 'suspense'], [/funny|comedy|playful|humou?r/, 'comedy'], [/tech|futur|digital|startup|software/, 'technology'],
     [/corporate|business|professional/, 'corporate'], [/inspir|motivat|uplift/, 'inspirational'], [/minimal|ambient|calm|relax|peaceful/, 'minimal'], [/documentar/, 'documentary'], [/cinematic|epic|dramatic/, 'cinematic'],

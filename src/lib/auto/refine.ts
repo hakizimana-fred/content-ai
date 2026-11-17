@@ -66,8 +66,20 @@ export function refine(p: AutoProject, instruction: string): RefineResult {
   const fmt: [RegExp, Format][] = [[/tiktok|reels?|shorts|vertical|9:16/, '9:16'], [/landscape|16:9|youtube|widescreen/, '16:9'], [/square|1:1/, '1:1']];
   for (const [re, f] of fmt) if (has(t, re) && has(t, /(make|change|switch|use|export|format|convert|for)/) && c.format !== f) { c.format = f; note(`format changed to ${f}`, 'composition', 'visual'); break; }
 
+  // look: background, typography, colour (Idea-to-Video / Mixed scenes)
+  const bgm = /\b(aurora|grid|neon grid|particles?|waves?|gradient|solid)\b.*\b(background|backdrop)|\b(background|backdrop)\b.*\b(aurora|grid|particles?|waves?|gradient|solid)\b/.exec(t);
+  if (bgm) { const w = (bgm[1] ?? bgm[4]).replace('neon ', '').replace(/s$/, ''); const bg = ({ aurora: 'aurora', grid: 'grid', particle: 'particles', wave: 'waves', gradient: 'gradient', solid: 'solid' } as Record<string, string>)[w]; if (bg) { c.look = { ...(c.look ?? {}), bg: bg as never }; note(`${bg} background`, 'visual'); } }
+  const fnt = /\b(elegant|serif|modern|bold|tech(?:nical)?|monospace)\b.*\b(font|typography|typeface|type|text)\b|\b(font|typography|typeface)\b.*\b(elegant|serif|modern|bold|tech(?:nical)?|monospace)\b/.exec(t);
+  if (fnt) { const w = fnt[1] ?? fnt[4]; const f = /elegant|serif/.test(w) ? 'elegant' : /tech|mono/.test(w) ? 'tech' : w === 'bold' ? 'bold' : 'modern'; c.look = { ...(c.look ?? {}), font: f as never }; note(`${f} typography`, 'visual'); }
+  const col = /\b(?:make it|use|change (?:the )?(?:colou?r|accent) to|with|in)?\s*\b(red|blue|purple|green|gold|orange|pink|cyan|yellow)\b\s*(?:accent|colou?r|theme|tones?)/.exec(t);
+  if (col) { const hex = ({ red: '#ef4444', blue: '#3b82f6', purple: '#a855f7', green: '#22c55e', gold: '#d4af37', orange: '#f97316', pink: '#ec4899', cyan: '#22d3ee', yellow: '#facc15' } as Record<string, string>)[col[1]]; c.look = { ...(c.look ?? {}), accent: hex }; note(`${col[1]} accent colour`, 'visual'); }
+  if (has(t, /\b(light|white|bright)\s+(background|theme|look)/)) { c.look = { ...(c.look ?? {}), light: true }; note('light theme', 'visual'); }
+  if (has(t, /\b(dark|darker)\s+(background|theme|look)/)) { c.look = { ...(c.look ?? {}), light: false }; note('dark theme', 'visual'); }
+  const sceneText = /(?:change|set|edit|rewrite)\s+(?:the\s+)?(first|second|third|fourth|fifth|last|\d+(?:st|nd|rd|th)?)\s+scene(?:'s)?\s+(?:text|title|line)?\s*(?:to|:)\s*["\u201C']([^"\u201D']{1,80})["\u201D']/.exec(t.length ? instruction.toLowerCase() === t ? instruction : instruction : instruction);
+  if (sceneText) { const shots = (p.timeline?.shots ?? []).filter((x) => x.kind === 'scene'); const n = sceneText[1].toLowerCase() === 'last' ? shots.length : ORD[sceneText[1].toLowerCase()] ?? parseInt(sceneText[1], 10); const sc = shots[n - 1]?.scene;
+    if (!sc) notes.push(`There is no generated scene ${n}.`); else { const f = sc.kind === 'quote' ? 'quote' : sc.kind === 'outro' ? 'cta' : 'title'; c.sceneEdits = { ...(c.sceneEdits ?? {}), [sc.id]: { ...(c.sceneEdits?.[sc.id] ?? {}), [f]: sceneText[2].trim() } }; note(`scene ${n} text set to “${sceneText[2].trim()}”`, 'composition'); } }
   const q = quoted(instruction);
-  if (q && has(t, /(headline|title|opening (text|line)|heading)/)) { c.headline = q; note(`headline: “${q}”`, 'text'); }
+  if (q && !sceneText && has(t, /(headline|title|opening (text|line)|heading)/)) { c.headline = q; note(`headline: “${q}”`, 'text'); }
   if (q && has(t, /(call to action|cta|closing (text|message|line)|ending (text|message))/)) { c.cta = q; note(`closing message: “${q}”`, 'text'); }
   if (has(t, /(remove|no|delete)\s+(the\s+)?(headline|title)\b/)) { c.headline = undefined; note('headline removed', 'text'); }
   if (has(t, /(another|different|new)\s+(version|cut|edit|arrangement|order)|shuffle|rearrange|try again/)) { c.variation = (c.variation ?? 0) + 1; note('a different arrangement of the same material', 'composition'); }

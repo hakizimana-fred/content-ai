@@ -1,5 +1,5 @@
 import { rng } from '../studio/dsp.ts';
-import { FORMAT_DIMS, type AutoAsset, type AutoConfig, type MotionType, type Shot, type Timeline } from './types.ts';
+import { dimsFor, type AutoAsset, type AutoConfig, type MotionType, type Shot, type Timeline } from './types.ts';
 import type { Intent, StyleProfile } from './profiles.ts';
 
 export interface BeatGrid { bpm: number | null; beatOffset: number; mood: string | null; seed: number | null }
@@ -69,7 +69,7 @@ function arrange(chosen: Unit[], keepOrder: boolean, rand: () => number): Unit[]
 
 export function compose(inp: ComposeInput): Timeline {
   const { assets, config, profile, intent, grid } = inp; const rand = rng((inp.seed + (inp.config.variation ?? 0) * 7919) * 104729 + 7);
-  const { w, h } = FORMAT_DIMS[config.format]; const A = w / h; const feel = config.transitionFeel ?? 'auto';
+  const { w, h } = dimsFor(config); const A = w / h; const feel = config.transitionFeel ?? 'auto';
   const notes: string[] = []; const beat = grid.bpm ? 60 / grid.bpm : 0.5; const offset = grid.bpm ? grid.beatOffset % beat : 0;
   const paceMul = intent.pace === 'fast' ? 0.8 : intent.pace === 'slow' ? 1.25 : 1;
   const [pMin, pMax] = profile.photoRange.map((x) => x * paceMul) as [number, number];
@@ -164,6 +164,6 @@ export function compose(inp: ComposeInput): Timeline {
   });
   // a video shot must never run past its source
   for (const s of shots) if (s.kind === 'video') { const a = assets.find((x) => x.id === s.assetId)!; if (s.srcStart + s.srcLen > a.duration) s.srcStart = Math.max(0, a.duration - s.srcLen); if (s.srcLen > a.duration) { s.srcLen = a.duration; notes.push(`video "${a.name}" is shorter than its slot; its last frame is held`); } }
-  return { shots, total: +total.toFixed(3), fps: FPS, w, h, bpm: grid.bpm, beatOffset: offset, beatSeconds: grid.bpm ? beat : null, musicMood: grid.mood, musicSeed: grid.seed,
+  return { shots, total: +total.toFixed(3), fps: config.fps ?? FPS, w, h, bpm: grid.bpm, beatOffset: offset, beatSeconds: grid.bpm ? beat : null, musicMood: grid.mood, musicSeed: grid.seed,
     dropped, notes, text: { headline: config.headline?.trim() || undefined, cta: config.cta?.trim() || undefined } };
 }

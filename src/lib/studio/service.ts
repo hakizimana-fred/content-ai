@@ -1,6 +1,6 @@
 import { detectHardware } from './hardware.ts';
 import { MODEL_CATALOG, ResourceManager, checkFit, type ModelSpec } from './models.ts';
-import { LlamaServerRuntime, llamaChat, runtimeAvailable } from './llama-runtime.ts';
+import { LlamaServerRuntime, llamaChat, runtimeAvailable, type ChatRequest } from './llama-runtime.ts';
 import { direct, type DirectorResult } from './director.ts';
 import type { EditingPlan } from './plan.ts';
 import { getPreferredPlannerId } from './settings.ts';
@@ -43,6 +43,12 @@ export function plannerStatus(spec: ModelSpec = MODEL_CATALOG.find((m) => m.id =
 }
 
 export function resourceStatus() { return manager().status(); }
+
+/** The local planner as a plain function, for other features (Auto Studio's Creative Director). null + reason when no model can run. */
+export function plannerLLM(label: string): { ok: true; id: string; llm: (req: ChatRequest) => Promise<string> } | { ok: false; reason: string } {
+  const st = plannerStatus(); if (!st.usable) return { ok: false, reason: st.reason ?? 'no usable local model' };
+  return { ok: true, id: st.spec.id, llm: (req) => manager().run(st.spec, label, () => llamaChat(req)) };
+}
 
 /** Plan (or refine) from natural language. Uses the local model when it fits and is installed, otherwise rules only. */
 export async function createPlan(instruction: string, opts: { base?: EditingPlan; useModel?: boolean } = {}): Promise<DirectorResult & { model: string | null }> {

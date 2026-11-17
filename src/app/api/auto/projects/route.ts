@@ -18,6 +18,22 @@ export function cleanConfig(b: Record<string, unknown>, base: AutoConfig): { ok:
   if (b.soundtrackId !== undefined) { if (b.soundtrackId !== null && (typeof b.soundtrackId !== 'string' || !/^[a-f0-9]{16}$/.test(b.soundtrackId))) return { ok: false, error: 'invalid soundtrack id.' }; c.soundtrackId = (b.soundtrackId as string | null) ?? undefined; }
   for (const k of ['headline', 'cta'] as const) if (b[k] !== undefined) { if (b[k] !== null && (typeof b[k] !== 'string' || (b[k] as string).length > 80)) return { ok: false, error: `${k} must be text up to 80 characters.` }; c[k] = ((b[k] as string | null) ?? '').trim() || undefined; }
   for (const k of ['keepOrder', 'captions', 'useModel'] as const) if (b[k] !== undefined) { if (typeof b[k] !== 'boolean') return { ok: false, error: `${k} must be true or false.` }; c[k] = b[k] as boolean; }
+  if (b.mode !== undefined) { if (!['video', 'image', 'idea', 'mixed'].includes(b.mode as string)) return { ok: false, error: 'unknown creation mode.' }; c.mode = b.mode as AutoConfig['mode']; }
+  if (b.quality !== undefined) { if (!['preview', 'final'].includes(b.quality as string)) return { ok: false, error: 'quality must be preview or final.' }; c.quality = b.quality as AutoConfig['quality']; }
+  if (b.creativeAssetIds !== undefined) { const a = b.creativeAssetIds; if (!Array.isArray(a) || a.length > 8 || !a.every((x) => typeof x === 'string' && /^ca_[a-f0-9]{12}$/.test(x))) return { ok: false, error: 'invalid creative asset list.' }; c.creativeAssetIds = a as string[]; }
+  if (b.sceneEdits !== undefined) {
+    const e = b.sceneEdits as Record<string, Record<string, unknown>>; if (!e || typeof e !== 'object' || Array.isArray(e)) return { ok: false, error: 'invalid scene edits.' }; const out: NonNullable<AutoConfig['sceneEdits']> = {};
+    for (const [id, v] of Object.entries(e)) {
+      if (!/^[a-z]+\d{0,2}$/.test(id) || !v || typeof v !== 'object') return { ok: false, error: 'invalid scene id.' }; const o2: Record<string, unknown> = {};
+      for (const k of ['title', 'subtitle', 'cta', 'quote', 'attribution']) if (v[k] !== undefined) { if (typeof v[k] !== 'string' || (v[k] as string).length > 160) return { ok: false, error: `scene ${k} must be text up to 160 characters.` }; o2[k] = (v[k] as string).trim(); }
+      if (v.bullets !== undefined) { if (!Array.isArray(v.bullets) || v.bullets.length > 5 || !v.bullets.every((x) => typeof x === 'string' && x.length <= 60)) return { ok: false, error: 'bullets must be up to 5 short lines.' }; o2.bullets = v.bullets; }
+      out[id] = o2 as never;
+    }
+    c.sceneEdits = out;
+  }
+  if (b.fontAssetId !== undefined) { if (b.fontAssetId !== null && (typeof b.fontAssetId !== 'string' || !/^ca_[a-f0-9]{12}$/.test(b.fontAssetId))) return { ok: false, error: 'invalid font id.' }; c.fontAssetId = (b.fontAssetId as string | null) ?? undefined; }
+  if (b.fps !== undefined) { if (b.fps !== 24 && b.fps !== 30) return { ok: false, error: 'fps must be 24 or 30.' }; c.fps = b.fps; }
+  if (b.commercial !== undefined) { if (typeof b.commercial !== 'boolean') return { ok: false, error: 'commercial must be true or false.' }; c.commercial = b.commercial; }
   if (b.identityId !== undefined) c.identityId = typeof b.identityId === 'string' && /^idn_[a-z0-9]{3,16}$/.test(b.identityId) ? b.identityId : undefined;
   return { ok: true, config: c };
 }

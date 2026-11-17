@@ -16,6 +16,7 @@ import type { Soundtrack } from './soundtrack.ts';
 import { STUDIO_DIR } from '../studio/settings.ts';
 import { logoFile } from '../studio/logo-store.ts';
 import { getIdentity } from '../studio/identity-store.ts';
+import { creativeFile, getCreative } from './creative-assets.ts';
 
 const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
 const AMP = { subtle: 0.6, medium: 1, strong: 1.35 } as const;
@@ -47,22 +48,50 @@ export function videoShotGraph(s: Shot, W: number, H: number, fps: number, hasAu
   return `${v};${hasAudio ? '[0:a]' : '[1:a]'}aresample=48000,aformat=channel_layouts=stereo,asetpts=PTS-STARTPTS[a]`;
 }
 
-export function shotKey(s: Shot, a: AutoAsset, t: Timeline, profile: StyleProfile): string {
+const sceneExt = (s: Shot) => (s.kind === 'video' ? 'mkv' : 'mp4');
+/** Resolve the creative-library file a scene uses as its background (image or video), if any. */
+function sceneAsset(s: Shot): { file: string; kind: 'image' | 'video' | 'model' } | null {
+  const id = s.scene?.creativeAssetId; if (!id) return null; const a = getCreative(id); const f = a ? creativeFile(a) : null;
+  return a && f && fs.existsSync(f) ? { file: f, kind: a.kind === 'model' ? 'model' : a.kind === 'footage' || /^(mp4|mov|webm)$/.test(a.ext ?? '') ? 'video' : 'image' } : null;
+}
+/** Content hash of the scene renderer + bundled fonts: changing either invalidates cached scene clips. */
+let rv: { t: number; h: string } | null = null;
+function rendererVersion(): string {
+  const fs_ = ['scene_render.py', 'render3d.py'].map((n) => SCRIPT(n)), t = fs_.reduce((a, f) => a + fs.statSync(f).mtimeMs, 0); if (rv && rv.t === t) return rv.h;
+  const h = crypto.createHash('sha1'); for (const f of fs_) h.update(fs.readFileSync(f)); rv = { t, h: h.digest('hex').slice(0, 12) }; return rv.h;
+}
+let FONT_FILE: string | null = null;
+const fontFileOf = () => (FONT_FILE && fs.existsSync(FONT_FILE) ? [FONT_FILE, fs.statSync(FONT_FILE).mtimeMs] : null);
+const beatPhase = (s: Shot, i: number, t: Timeline) => (i === 0 ? t.beatOffset : (t.shots[i - 1].transitionOut?.dur ?? 0) / 2);
+export function shotKey(s: Shot, a: AutoAsset | undefined, t: Timeline, profile: StyleProfile): string {
+  if (s.kind === 'scene') { const sa = sceneAsset(s), i = t.shots.indexOf(s); return sha({ v: 2, r: rendererVersion(), ff: fontFileOf(), sc: s.scene, look: t.look, len: s.len, w: t.w, h: t.h, fps: t.fps, beat: t.beatSeconds, ph: beatPhase(s, i, t), asset: sa && [sa.file, fs.statSync(sa.file).mtimeMs] }); }
+  if (!a) throw new Error('missing media for shot');
   return sha({ v: 2, s: { k: s.kind, len: s.len, src: s.srcStart, srcLen: s.srcLen, m: s.motion, lay: s.layout, f: s.focus, vf: s.videoFraming, cx: s.videoCenterX }, a: [a.file, a.bytes], w: t.w, h: t.h, fps: t.fps, amp: profile.motionIntensity });
 }
 
 async function renderShots(o: RenderOptions): Promise<number> {
   const { project, timeline: t, profile } = o; const dir = path.join(renderDir(project.id), 'shots'); fs.mkdirSync(dir, { recursive: true });
-  let cached = 0;
+  let cached = 0; FONT_FILE = null;
+  const fid = project.config.fontAssetId; if (fid) { const fa = getCreative(fid); const ff = fa && fa.kind === 'font' ? creativeFile(fa) : null; if (ff) FONT_FILE = ff; }
   for (let i = 0; i < t.shots.length; i++) {
     if (o.signal?.cancelled) throw new Error('Cancelled');
-    const s = t.shots[i], a = project.assets.find((x) => x.id === s.assetId)!; const key = shotKey(s, a, t, profile);
-    const out = path.join(dir, `${key}.${s.kind === 'photo' ? 'mp4' : 'mkv'}`);
-    o.stage('shots', { status: 'running', detail: `shot ${i + 1} of ${t.shots.length}: ${a.name}`, progress: Math.round((i / t.shots.length) * 100) });
+    const s = t.shots[i], a = project.assets.find((x) => x.id === s.assetId) as AutoAsset; const key = shotKey(s, a, t, profile);
+    const out = path.join(dir, `${key}.${sceneExt(s)}`); const label = s.kind === 'scene' ? `${s.scene!.kind} scene` : a.name;
+    o.stage('shots', { status: 'running', detail: `shot ${i + 1} of ${t.shots.length}: ${label}`, progress: Math.round((i / t.shots.length) * 100) });
     if (fs.existsSync(out)) { cached++; continue; }
     const tmp = out + '.part';
     try {
-      if (s.kind === 'photo') {
+      if (s.kind === 'scene') {
+        const sc = s.scene!, look = t.look!, sa = sceneAsset(s);
+        const job = { out: tmp, w: t.w, h: t.h, fps: t.fps, seconds: s.len, beat: t.beatSeconds ?? 0, beatT0: beatPhase(s, i, t), seed: i + 1,
+          bg: { type: sa && sa.kind !== 'model' ? 'asset' : sc.bg === 'asset' ? 'aurora' : sc.bg, colors: look.colors, accent: look.accent, speed: look.speed, asset: sa?.kind === 'model' ? undefined : sa?.file, assetKind: sa?.kind === 'model' ? undefined : sa?.kind, dim: look.dim },
+          text: { color: look.text, font: look.font, upper: look.upper, anim: look.anim, fontFile: FONT_FILE },
+          fx: look.fx, motif: look.motif,
+          scene: { kind: sc.kind, composition: sc.composition, steps: sc.steps, three: sc.three && sa?.kind === 'model' ? { ...sc.three, objects: sc.three.objects.map((ob) => (ob.shape === 'glb' ? { ...ob, file: sa.file } : ob)) } : sc.three, scenery: sc.scenery, motion: sc.motion, asset: sa?.kind === 'model' ? undefined : sa?.file, assetKind: sa?.kind === 'model' ? undefined : sa?.kind, title: sc.title, subtitle: sc.subtitle, lines: sc.lines, quote: sc.quote, attribution: sc.attribution, cta: sc.cta, bullets: sc.bullets, stats: sc.stats } };
+        await run(PY(), [SCRIPT('scene_render.py')], { input: JSON.stringify(job), timeoutMs: 900_000, nice: true, signal: o.signal,
+          onStderr: (c) => { const m = [...c.matchAll(/PROGRESS (\d+) (\d+)/g)].pop(); if (m) o.stage('shots', { status: 'running', detail: `scene ${i + 1} of ${t.shots.length}: ${label}, frame ${m[1]} of ${m[2]}`, progress: Math.round(((i + Number(m[1]) / Number(m[2])) / t.shots.length) * 100) }); } });
+        if (fs.existsSync(tmp + '.meta.json')) fs.renameSync(tmp + '.meta.json', out + '.meta.json');
+      } else if (s.kind === 'photo') {
         await run(PY(), [SCRIPT('auto_motion.py')], { input: JSON.stringify({ image: assetPath(project, a), out: tmp, w: t.w, h: t.h, fps: t.fps, seconds: s.len, move: s.motion ?? 'zoom_in', focus: s.focus, layout: s.layout, amp: AMP[profile.motionIntensity] }), timeoutMs: 600_000, nice: true });
       } else {
         const src = assetPath(project, a), len = s.len;
@@ -71,7 +100,7 @@ async function renderShots(o: RenderOptions): Promise<number> {
         await ffmpegProgress(args, len, () => { /* per-shot sub-progress is folded into the shot counter */ }, o.signal);
       }
       fs.renameSync(tmp, out);
-    } catch (e) { try { fs.unlinkSync(tmp); } catch { /* none */ } throw new Error(`Shot ${i + 1} (${a.name}) failed: ${(e as Error).message.slice(-260)}`); }
+    } catch (e) { try { fs.unlinkSync(tmp); } catch { /* none */ } try { fs.unlinkSync(tmp + '.meta.json'); } catch { /* none */ } if ((e as Error).message === 'Cancelled') throw e; throw new Error(`Shot ${i + 1} (${label}) failed: ${(e as Error).message.slice(-260)}`); }
   }
   o.stage('shots', { status: 'done', detail: `${t.shots.length} shots rendered${cached ? ` (${cached} reused from cache)` : ''}`, progress: 100 });
   return cached;
@@ -161,7 +190,7 @@ export async function renderProject(o: RenderOptions): Promise<RenderResult> {
   const gradeName = profile.grade; const grade = gradeName !== 'none' ? GRADE_FILTERS[gradeName] : null; if (grade) applied.push(`${gradeName} colour grade`);
   const idn = project.config.identityId ? getIdentity(project.config.identityId) : null; const logoPath = idn?.logo ? logoFile(idn.id) : null;
   const fontsDirP = path.join(process.cwd(), 'storage', 'fonts'); const fontsDir = fs.existsSync(fontsDirP) ? fontsDirP : null;
-  const shotFiles = t.shots.map((s) => { const a = project.assets.find((x) => x.id === s.assetId)!; return path.join(rdir, 'shots', `${shotKey(s, a, t, profile)}.${s.kind === 'photo' ? 'mp4' : 'mkv'}`); });
+  const shotFiles = t.shots.map((s) => path.join(rdir, 'shots', `${shotKey(s, project.assets.find((x) => x.id === s.assetId), t, profile)}.${sceneExt(s)}`));
   const joinKey = sha({ v: 2, shots: shotFiles.map((f) => path.basename(f)), tr: t.shots.map((s) => [s.start, s.len, s.transitionOut]), ass, grade, logo: logoPath && fs.statSync(logoPath).mtimeMs });
   const joined = path.join(rdir, `joined_${joinKey}.mp4`); const hadJoin = fs.existsSync(joined);
   if (hadJoin) o.stage('join', { status: 'done', detail: 'reused the previous assembly (only audio changed)', progress: 100 });
@@ -186,7 +215,7 @@ export async function renderProject(o: RenderOptions): Promise<RenderResult> {
   const wantMusic = soundtrack.source === 'library' || soundtrack.source === 'tray' || soundtrack.source === 'generated';
   const hasSpeech = speechAssets.length > 0;
   const spec: AudioDesignSpec = { mood: soundtrack.mood ?? 'none', intensity: soundtrack.intensity, music: wantMusic, musicVolume: Math.min(1, (hasSpeech ? 0.2 : 0.38) * (project.config.musicGain ?? 1)), soundEffects: project.config.audioMode !== 'original',
-    ducking: true, ending: project.config.audioMode === 'original' ? 'none' : t.text.cta ? 'call_to_action' : profile.id === 'cinematic' || profile.id === 'documentary' ? 'clean_fade' : 'dramatic_resolution',
+    ducking: true, ending: project.config.audioMode === 'original' ? 'none' : (t.text.cta || t.shots.some((s) => s.scene?.cta)) ? 'call_to_action' : profile.id === 'cinematic' || profile.id === 'documentary' ? 'clean_fade' : 'dramatic_resolution',
     seed: soundtrack.seed ?? 1, sfxCues: t.shots.filter((s) => s.transitionOut && s.cutAt > 1.5).map((s) => ({ t: Math.max(0, s.cutAt - (s.transitionOut!.type === 'cut' ? 0 : 0.18)), kind: s.transitionOut!.type === 'cut' ? 'click' as const : profile.transitionSfx })),
     grade: 'none', musicFile: soundtrack.file, cueGap: profile.id === 'social' ? 1.1 : 1.7 };
   const final = path.join(rdir, `final_${sha({ joinKey, spec, v: 3 })}.mp4`);

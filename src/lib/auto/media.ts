@@ -10,13 +10,16 @@ export const SCRIPT = (n: string) => path.join(process.cwd(), 'src', 'lib', 'aut
 export const MAX_BYTES: Record<AssetKind, number> = { photo: 40 * 1024 * 1024, video: 1024 * 1024 * 1024, audio: 150 * 1024 * 1024 };
 export const MAX_ASSETS = 40;
 
-export function run(bin: string, args: string[], opts: { input?: string; timeoutMs?: number; nice?: boolean } = {}): Promise<{ stdout: string; stderr: string }> {
+export function run(bin: string, args: string[], opts: { input?: string; timeoutMs?: number; nice?: boolean; onStderr?: (chunk: string) => void; signal?: { cancelled: boolean } } = {}): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const p = opts.nice ? spawn('nice', ['-n', '10', bin, ...args], { stdio: ['pipe', 'pipe', 'pipe'] }) : spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    let out = '', err = ''; const t = setTimeout(() => { p.kill('SIGKILL'); reject(new Error(`${path.basename(bin)} timed out`)); }, opts.timeoutMs ?? 120_000);
-    p.stdout.on('data', (d) => { out += d; }); p.stderr.on('data', (d) => { err += d; if (err.length > 300_000) err = err.slice(-150_000); });
-    p.on('error', (e) => { clearTimeout(t); reject(e); });
-    p.on('close', (c) => { clearTimeout(t); c === 0 ? resolve({ stdout: out, stderr: err }) : reject(new Error(`${path.basename(bin)} exited ${c}: ${err.slice(-300)}`)); });
+    let out = '', err = '', killed = false; const t = setTimeout(() => { p.kill('SIGKILL'); reject(new Error(`${path.basename(bin)} timed out`)); }, opts.timeoutMs ?? 120_000);
+    // cancellation: the child is really killed (not just ignored until it finishes)
+    const poll = opts.signal ? setInterval(() => { if (opts.signal!.cancelled && !killed) { killed = true; p.kill('SIGKILL'); } }, 300) : null;
+    const done = () => { clearTimeout(t); if (poll) clearInterval(poll); };
+    p.stdout.on('data', (d) => { out += d; }); p.stderr.on('data', (d) => { err += d; opts.onStderr?.(String(d)); if (err.length > 300_000) err = err.slice(-150_000); });
+    p.on('error', (e) => { done(); reject(e); });
+    p.on('close', (c) => { done(); if (killed) reject(new Error('Cancelled')); else c === 0 ? resolve({ stdout: out, stderr: err }) : reject(new Error(`${path.basename(bin)} exited ${c}: ${err.slice(-300)}`)); });
     p.stdin.on('error', () => { /* child closed early */ }); p.stdin.end(opts.input ?? '');
   });
 }

@@ -3,17 +3,23 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { analyseProject } from './analyze.ts';
 import { compose } from './compose.ts';
+import { materialize } from './creative.ts';
+import { generatePlan, planIsCurrent } from './plan-service.ts';
+import { pendingReview } from './copy.ts';
+import { runQc } from './qc.ts';
+import { composeIdea, spliceScenes } from './scenes.ts';
+import { getCreative } from './creative-assets.ts';
 import { STYLE_PROFILES, interpretIntent } from './profiles.ts';
-import { renderProject } from './render.ts';
+import { renderProject, shotKey as shotKeyOf } from './render.ts';
 import { resolveSoundtrack } from './soundtrack.ts';
 import { assetPath, getProject, renderDir, updateProject } from './store.ts';
-import type { AutoAsset, AutoProject, StageState } from './types.ts';
+import type { AutoAsset, AutoProject, QcReport, StageState } from './types.ts';
 import { applyRules } from '../studio/rules.ts';
 import { DEFAULT_PLAN } from '../studio/plan.ts';
 
 export const STAGE_DEFS: { id: string; label: string }[] = [
   { id: 'analyse', label: 'Analyse materials' }, { id: 'understand', label: 'Understand creative instruction' }, { id: 'plan', label: 'Generate production plan' },
-  { id: 'compose', label: 'Select and arrange footage' }, { id: 'shots', label: 'Apply motion and visual effects' }, { id: 'transcribe', label: 'Captions and text' },
+  { id: 'compose', label: 'Select and arrange footage and scenes' }, { id: 'shots', label: 'Apply motion and render scenes' }, { id: 'transcribe', label: 'Captions and text' },
   { id: 'join', label: 'Assemble and synchronise to the beat' }, { id: 'audio', label: 'Soundtrack and audio mix' }, { id: 'finish', label: 'Finish' },
 ];
 
@@ -28,8 +34,18 @@ const stableSeed = (id: string) => parseInt(crypto.createHash('sha1').update(id)
 export function startRender(projectId: string, opts: { transcribe?: (a: AutoAsset, p: AutoProject) => Promise<{ segments: unknown[] } | null> } = {}): { ok: true } | { ok: false; error: string; status: number } {
   const p = getProject(projectId); if (!p) return { ok: false, error: 'project not found', status: 404 };
   if (g.__autoJob) return { ok: false, error: g.__autoJob.projectId === projectId ? 'This video is already being made.' : 'Another video is being made. Wait for it to finish.', status: 409 };
-  if (!p.assets.some((a) => a.kind !== 'audio')) return { ok: false, error: 'Add at least one photo or video first.', status: 400 };
+  const mode = p.config.mode ?? 'video', hasMedia = p.assets.some((a) => a.kind !== 'audio');
+  if (mode !== 'idea' && mode !== 'mixed' && !hasMedia) return { ok: false, error: mode === 'image' ? 'Add at least one photo first, or switch to Idea-to-Video.' : 'Add at least one photo or video first, or switch to Idea-to-Video.', status: 400 };
+  if (mode === 'video' && !p.assets.some((a) => a.kind === 'video') && hasMedia) { /* photos only: still fine, handled as before */ }
   if (!p.config.prompt.trim()) return { ok: false, error: 'Describe the video you want first.', status: 400 };
+  if (mode === 'idea' || mode === 'mixed') {
+    const pend = p.creative && !p.creative.auto && planIsCurrent(p) ? pendingReview(p.creative.copy) : [];
+    const ap = p.config.copyApproval; const reviewed = !pend.length || (ap && p.creative && ap.planId === p.creative.id);
+    if (!reviewed) return { ok: false, error: `Review the ${pend.length} suggested line(s) first: approve, edit or skip them in the Creative plan panel.`, status: 409 };
+  }
+  const ids = [...(p.config.creativeAssetIds ?? []), ...(p.config.fontAssetId ? [p.config.fontAssetId] : [])].map(getCreative).filter((x): x is NonNullable<typeof x> => !!x);
+  const unknown = ids.filter((x) => x.license.commercialOk !== true);
+  if (p.config.commercial && unknown.length) return { ok: false, error: `Commercial output is on, but these assets are not cleared for commercial use: ${unknown.map((x) => x.name).join(', ')}. Remove them or change their licence record.`, status: 409 };
   const job: Job = { projectId, cancelled: false, startedAt: Date.now() }; g.__autoJob = job;
   updateProject(projectId, (q) => { q.render = { jobId: crypto.randomBytes(4).toString('hex'), running: true, startedAt: Date.now(), stages: STAGE_DEFS.map((s) => ({ ...s, status: 'pending' as const })) }; });
   void execute(job, opts).finally(() => { g.__autoJob = null; });
@@ -51,11 +67,12 @@ async function execute(job: Job, opts: { transcribe?: (a: AutoAsset, p: AutoProj
     st('analyse', { status: 'running', detail: 'looking at your photos and videos', progress: 0 });
     const needs = p.assets.filter((a) => (a.kind === 'video' && !a.video) || (a.kind === 'audio' && !a.audio)).length;
     p = await analyseProject(p, (done, total, label) => { if (job.cancelled) throw new Error('Cancelled'); setStage(id, 'analyse', { status: 'running', detail: total ? `analysing ${label} (${done + 1} of ${total})` : 'photos were analysed on upload', progress: total ? Math.round((done / total) * 100) : 100 }); });
-    st('analyse', { status: 'done', detail: `${p.assets.filter((a) => a.kind === 'photo').length} photos, ${p.assets.filter((a) => a.kind === 'video').length} videos${needs ? ` (${needs} analysed now)` : ' (analysis reused)'}`, progress: 100 });
+    if (!p.assets.some((a) => a.kind !== 'audio')) st('analyse', { status: 'done', detail: 'no uploaded media (Idea-to-Video): nothing to analyse', progress: 100 });
+    else st('analyse', { status: 'done', detail: `${p.assets.filter((a) => a.kind === 'photo').length} photos, ${p.assets.filter((a) => a.kind === 'video').length} videos${needs ? ` (${needs} analysed now)` : ' (analysis reused)'}`, progress: 100 });
     if (job.cancelled) throw new Error('Cancelled');
 
     // 2. understand the instruction (rules first; optional local model)
-    current = 'understand'; st('understand', { status: 'running', detail: 'reading your instruction', progress: 0 });
+    const mode0 = p.config.mode ?? 'video'; current = 'understand'; st('understand', { status: 'running', detail: 'reading your instruction', progress: 0 });
     let plan = applyRules(p.config.prompt, { ...DEFAULT_PLAN }).plan, planSource = 'rules', modelNote = '';
     if (p.config.useModel) {
       try { const { createPlan } = await import('../studio/service.ts'); const r = await createPlan(p.config.prompt, { useModel: true }); plan = r.plan; planSource = r.source; if (r.warnings.length) modelNote = r.warnings[0]; }
@@ -63,7 +80,12 @@ async function execute(job: Job, opts: { transcribe?: (a: AutoAsset, p: AutoProj
     }
     const intent = interpretIntent(p.config.prompt, p.config.style, plan.style, plan.audio.mood);
     if (p.config.musicVariation && intent.mood === null) intent.mood = null;
-    st('understand', { status: 'done', detail: `style: ${intent.style}; ${intent.why.slice(0, 2).join('; ')}${modelNote ? ` (${modelNote})` : ''}`, progress: 100 });
+    let cp = p.creative && planIsCurrent(p) ? p.creative : null, planNote = '';
+    if (mode0 === 'idea' || mode0 === 'mixed') {
+      if (!cp) { cp = await generatePlan(id, { useModel: false, auto: true }); planNote = ' (no creative plan was prepared, so the keyword Director planned it from your words only)'; p = getProject(id)!; }
+      if (intent.mood === null && cp.soundtrack.mood && cp.soundtrack.mood !== 'none') { (intent as { mood: string | null }).mood = cp.soundtrack.mood; intent.why.push(`music mood "${cp.soundtrack.mood}" from the creative plan`); }
+    }
+    st('understand', { status: 'done', detail: `style: ${intent.style}; ${intent.why.slice(0, 2).join('; ')}${modelNote ? ` (${modelNote})` : ''}${planNote}`, progress: 100 });
 
     // 3. plan: soundtrack first, because the cut points are placed on its beats
     current = 'plan'; st('plan', { status: 'running', detail: 'choosing the soundtrack', progress: 0 });
@@ -75,20 +97,41 @@ async function execute(job: Job, opts: { transcribe?: (a: AutoAsset, p: AutoProj
 
     // 4. compose
     current = 'compose'; st('compose', { status: 'running', detail: 'selecting and ordering shots', progress: 0 });
-    const timeline = compose({ assets: p.assets, config: p.config, profile, intent, grid: { bpm: sound.bpm, beatOffset: sound.beatOffset, mood: sound.mood, seed: sound.seed }, seed: stableSeed(p.id) });
-    p = updateProject(id, (q) => { q.timeline = timeline; q.plan = { plan, planSource, intent, soundtrack: { ...sound, file: undefined } }; })!;
-    st('compose', { status: 'done', detail: `${timeline.shots.length} shots, ${timeline.total.toFixed(1)} s${timeline.dropped.length ? `, ${timeline.dropped.length} left out` : ''}`, progress: 100 });
+    const mode = p.config.mode ?? 'video'; let timeline, decided: string[] = [];
+    const T = p.config.durationSec, beat = sound.bpm ? 60 / sound.bpm : 0.5;
+    const hasMedia = p.assets.some((a) => a.kind !== 'audio');
+    const grid = { bpm: sound.bpm, beatOffset: sound.beatOffset, mood: sound.mood, seed: sound.seed };
+    const mat = cp ? materialize(cp, p.config) : null;
+    if (mat) decided = [...cp!.decided, ...(mat.dropped.length ? [`${mat.dropped.length} suggested line(s) you did not approve were left out`] : []), ...(mat.used ? [`${mat.used} approved suggested line(s) used`] : [])];
+    if (mode === 'idea' || (mode === 'mixed' && !hasMedia)) {
+      timeline = composeIdea({ scenes: mat!.scenes, look: mat!.look, config: p.config, profile, intent, grid, seed: stableSeed(p.id), notes: [...cp!.notes, ...(mode === 'mixed' ? ['Mixed media with no uploads was made as Idea-to-Video.'] : [])] });
+    } else if (mode === 'mixed') {
+      const sceneSec = mat!.scenes.reduce((a, s) => a + Math.max(1.8, s.weight * 2.2), 0);
+      const base = compose({ assets: p.assets, config: { ...p.config, durationSec: Math.max(5, T - sceneSec), headline: undefined, cta: undefined }, profile, intent, grid, seed: stableSeed(p.id) });
+      timeline = spliceScenes({ ...base, notes: [...base.notes, ...cp!.notes] }, mat!.scenes, mat!.look, p.config, profile, intent, stableSeed(p.id));
+    } else timeline = compose({ assets: p.assets, config: p.config, profile, intent, grid, seed: stableSeed(p.id) });
+    p = updateProject(id, (q) => { q.timeline = timeline; q.plan = { plan, planSource, intent, mode, soundtrack: { ...sound, file: undefined } }; })!;
+    st('compose', { status: 'done', detail: `${timeline.shots.length} ${mode === 'idea' ? 'scenes' : 'shots'}, ${timeline.total.toFixed(1)} s${timeline.dropped.length ? `, ${timeline.dropped.length} left out` : ''}`, progress: 100 });
 
     // 5-8. render (shots, captions, join, audio)
     const result = await renderProject({ project: p, timeline, soundtrack: sound, intent, profile, signal: job,
       stage: (sid, patch) => { current = sid; setStage(id, sid, patch, patch.status !== 'running'); },
       transcribe: opts.transcribe ? (a) => opts.transcribe!(a, p) : undefined });
 
+    result.applied.unshift(...decided, ...(p.config.quality === 'preview' ? [`preview quality (${timeline.w}×${timeline.h}); press Render final for the full-resolution export`] : [`final quality ${timeline.w}×${timeline.h}`]));
     current = 'finish'; st('finish', { status: 'running', detail: 'saving the video' });
     const out = path.join(renderDir(id), `video_${Date.now()}.mp4`); fs.copyFileSync(result.file, out);
     for (const f of fs.readdirSync(renderDir(id)).filter((x) => /^video_\d+\.mp4$/.test(x)).sort().slice(0, -3)) try { fs.unlinkSync(path.join(renderDir(id), f)); } catch { /* ignore */ }
-    updateProject(id, (q) => { q.render = { ...q.render, running: false, error: undefined, outputFile: path.basename(out), outputUrl: `/api/auto/output?project=${id}&file=${path.basename(out)}`, outputSeconds: result.seconds, finishedAt: Date.now(), applied: result.applied, skipped: result.skipped }; });
-    st('finish', { status: 'done', detail: `${result.seconds.toFixed(1)} s video ready`, progress: 100 });
+    // automated QC of the real file; a failed check is reported, never hidden
+    st('finish', { status: 'running', detail: 'checking the finished video (QC)' });
+    let qc: QcReport | undefined; const shotsDir = path.join(renderDir(id), 'shots');
+    try {
+      const metaFiles = timeline.shots.map((sh) => (sh.kind === 'scene' ? path.join(shotsDir, `${shotKeyOf(sh, p.assets.find((x) => x.id === sh.assetId), timeline, profile)}.mp4.meta.json`) : null));
+      qc = await runQc(p, timeline, out, metaFiles, p.config.audioMode !== 'none');
+      fs.writeFileSync(path.join(renderDir(id), `qc_${path.basename(out, '.mp4')}.json`), JSON.stringify(qc, null, 2));
+    } catch (e) { console.error('QC failed to run:', e); }
+    updateProject(id, (q) => { q.render = { ...q.render, qc, running: false, error: undefined, outputFile: path.basename(out), outputUrl: `/api/auto/output?project=${id}&file=${path.basename(out)}`, outputSeconds: result.seconds, finishedAt: Date.now(), applied: result.applied, skipped: result.skipped }; });
+    st('finish', { status: 'done', detail: `${result.seconds.toFixed(1)} s video ready${qc ? `; QC ${qc.verdict} (${qc.checks.filter((c) => c.status === 'pass').length}/${qc.checks.filter((c) => c.status !== 'skipped').length} checks passed)` : ''}`, progress: 100 });
   } catch (e) {
     const msg = (e as Error).message === 'Cancelled' ? 'Cancelled by you.' : (e as Error).message.slice(0, 400);
     updateProject(id, (q) => { q.render.running = false; q.render.error = msg; q.render.finishedAt = Date.now(); const s = q.render.stages.find((x) => x.id === current); if (s && s.status !== 'done') { s.status = 'error'; s.detail = msg; } });

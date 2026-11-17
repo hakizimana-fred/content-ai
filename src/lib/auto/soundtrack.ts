@@ -61,7 +61,8 @@ export function resolveSoundtrack(p: AutoProject, intent: Intent, opts: { allowR
   }
   if (cfg.audioMode === 'auto' && opts.allowRecommend !== false) {
     const top = recommend(intent, cfg.durationSec, listEntries(), 1)[0];
-    if (top && top.score >= 3.2 && audioFile(top.entry.id)) {
+    // a matching OR related-mood library track is preferred over composing a new one (score 1.2 = related mood only)
+    if (top && top.score >= 1.2 && audioFile(top.entry.id)) {
       const it = top.entry, bpm = it.imported ? it.bpm ?? null : musicBpm(it.mood as never, it.seed, (it.overrides ?? undefined) as never);
       return { ...base, source: 'library', file: audioFile(it.id)!.path, mood: (it.mood as never) ?? null, seed: it.seed || null, bpm: bpm ?? profile.defaultBpm, beatOffset: it.imported ? it.beatOffset ?? 0 : 0, label: it.label, license: it.license.license, commercialOk: it.license.commercialOk, libraryId: it.id,
         reason: `recommended from your library: ${top.reasons.join(', ')}` };

@@ -12,6 +12,11 @@ Everything runs on your own computer: no cloud, no paid API, no sample packs. Bu
 
 ## See it working
 
+### Editor: cut, reframe and caption for every platform
+Load a video (upload, or a YouTube URL you own), then drag on the timeline or type exact start and end times to select a segment. The phone preview shows the result in **TikTok, Reels, Shorts or YouTube** framing, with optional safe-area guides so nothing lands under the platform's buttons. Trim, crop, caption, style and export from one place. The screenshot uses the built-in sample video (**Load Instant Sample Video** on the start screen), so you can try everything without your own footage.
+
+![Editor: timeline selection, exact timestamps and a platform preview](docs/screenshots/editor.jpg)
+
 ### Describe a soundtrack, pick styles, choose a length
 Select up to four styles and the engine **blends** them into one composition rather than stacking tracks. Choose 15, 30, 45, 60 or 90 seconds, or a custom length (optionally with an intro lead-in and outro wind-down). Each variation is a genuinely different character, and every library track can be played or downloaded.
 
@@ -44,8 +49,23 @@ Describe the video, set format, duration and style, optionally blend a soundtrac
 - Ten sound effects (whoosh, riser, impact, stinger, and more) that you can audition and place on transitions.
 - Original synthesis only, so licensing is simple: commercial use is fine and every track records its licence.
 
-### Editor, Moments and AI Director
-Upload a file or ingest a YouTube URL (with an ownership confirmation), score attention and find candidate moments, cut with 9:16 framing, burned-in captions, face-aware framing and per-platform presets. The AI Director turns a plain-English instruction into an editing plan, using rules first and an optional local LLM second.
+### Editor
+A focused video cutter with one tab per job:
+
+| Tab | What it does |
+|---|---|
+| **Media** | Your imported videos and the YouTube ingest (needs an ownership confirmation first). |
+| **Trim** | Select a segment by dragging handles on the filmstrip timeline or typing exact times (millisecond precision); set start/end from the playhead with `I` and `O`/`0`, preview the selection, and add several cuts to a queue. |
+| **Crop** | Reframe landscape footage for vertical: **Auto Track** (finds faces, picks the one that is speaking and pans smoothly to keep them in frame), Centre, Left, Right, or Manual (drag the picture in the preview). |
+| **Captions** | Caption Studio: speech-to-text with faster-whisper, burned into the video, with styles such as word-by-word highlight and karaoke sweep and control over words per line. |
+| **Style** | Choose the platform frame (TikTok, Reels, Shorts, YouTube) and toggle safe-area guides. |
+| **AI Director** | Type an instruction such as "make a punchy 30-second TikTok of the funniest part with captions"; it becomes an editing plan you review. Rules run first, and the optional local Qwen model handles harder instructions. |
+| **Export** | Pick the platform preset (TikTok, Reels, Shorts, YouTube) and export. Clips land in your Library, where you can preview, download, retry or hand them to the share dialog. |
+
+Keyboard shortcuts are listed under the `?` button in the top bar.
+
+### Moments
+Scores attention across a long video from its loudness and silence pattern plus what is said (transcript text, weighted by how reliable the transcript is), and lists the candidate highlights. Cuts are snapped to sentence boundaries so a clip never starts or ends mid-sentence.
 
 ### Live Radar
 Track creators and detect when they go live through a configurable HTTP provider. Without a provider every status stays `UNKNOWN`; nothing is guessed. See `docs/LIVE_RADAR_SETUP.md`.

@@ -30,6 +30,7 @@ const EXAMPLES = [
   'Turn these photographs into an emotional travel montage with smooth camera movements and atmospheric music.',
   'Create a premium advertisement for this product. Make it look luxurious with sophisticated background music.',
 ];
+const SFX_CHOICES: [string, string][] = [['whoosh', 'Whoosh'], ['riser', 'Riser'], ['impact', 'Cinematic impact'], ['bass_impact', 'Bass impact'], ['click', 'Subtle click'], ['stinger', 'Short stinger'], ['notification', 'Notification'], ['electronic_accent', 'Electronic accent'], ['ambient_texture', 'Ambient texture'], ['transition', 'Transition']];
 const SOUND_STYLES: [string, string][] = [['cinematic', 'Cinematic'], ['corporate', 'Corporate'], ['luxury', 'Luxury'], ['ambient', 'Ambient'], ['electronic', 'Electronic'], ['african_fusion', 'African Fusion'], ['inspirational', 'Inspirational'], ['dramatic', 'Dramatic'], ['minimal', 'Minimal'], ['experimental', 'Experimental']];
 const REFINE_CHIPS = ['Make it more cinematic', 'Change the soundtrack', 'Make the transitions smoother', 'Increase the text size', 'Make the opening more engaging', 'Reduce the background music', 'Use a more energetic soundtrack', 'Remove the second scene'];
 
@@ -98,6 +99,9 @@ export const AutoStudioWorkspace: React.FC<{ identities?: { id: string; name: st
     catch (e) { setErr((e as Error).message); }
   };
   const loadTracks = async () => { if (!p) return; try { const [a, b] = await Promise.all([api('/api/studio/sound'), api(`/api/auto/soundtracks?project=${p.id}`)]); setTracks((a.library as LibraryEntry[]).filter((x) => x.kind === 'music')); setRecs(b.recommendations); setShowTracks(true); } catch (e) { setErr((e as Error).message); } };
+  const auditionSfx = async (kind: string, label: string) => {
+    try { const r = await fetch('/api/studio/sound', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sfx: kind, seed: 1 + (cfg?.sfxVariation ?? 0) * 7919 }) }); const j = await r.json(); if (j.success && j.items?.[0]) player.toggle({ id: j.items[0].id, title: label, src: `/api/studio/sound/file?id=${j.items[0].id}` }); } catch { /* preview is best-effort */ }
+  };
   const preview = (id: string, title = 'Soundtrack') => player.toggle({ id, title, src: `/api/studio/sound/file?id=${id}` });
 
   const used = new Map<string, number>(); p?.timeline?.shots.forEach((s, i) => { if (!used.has(s.assetId)) used.set(s.assetId, i + 1); });
@@ -192,6 +196,13 @@ export const AutoStudioWorkspace: React.FC<{ identities?: { id: string; name: st
             <div className="text-xs text-zinc-300 mb-1">Compose the soundtrack from styles (optional)</div>
             <div className="flex flex-wrap gap-1.5">{SOUND_STYLES.map(([id, l]) => { const on = (cfg.soundtrackStyles ?? []).includes(id); return <button key={id} type="button" aria-pressed={on} data-testid={`auto-style-${id}`} disabled={running} onClick={() => { const cur = cfg.soundtrackStyles ?? []; void save({ soundtrackStyles: on ? cur.filter((x) => x !== id) : [...cur, id].slice(0, 4) }); }} className={`px-2.5 py-1 rounded-full text-[11px] border ${on ? 'bg-violet-500/30 border-violet-300/60 text-white' : 'border-white/10 text-zinc-300 hover:bg-white/5'}`}>{l}</button>; })}</div>
             {(cfg.soundtrackStyles?.length ?? 0) > 0 && <div className="flex items-center gap-3 mt-2 text-[11px] text-zinc-400"><label>Alternatives to save: {cfg.soundtrackVariations ?? 1}<input type="range" min={1} max={4} value={cfg.soundtrackVariations ?? 1} onChange={(e) => void save({ soundtrackVariations: Number(e.target.value) })} className="ml-2 align-middle accent-violet-400" aria-label="Soundtrack variations" /></label><span>The engine blends these into one real composition for your video; extra variations are saved to your Sound Library.</span></div>}
+          </div>}
+          {cfg.audioMode !== 'original' && cfg.audioMode !== 'none' && <div className="mt-4 border-t border-white/[0.06] pt-3" data-testid="sfx-picker">
+            <div className="text-xs text-zinc-300 mb-1">Sound effects on the transitions (optional)</div>
+            <div className="flex flex-wrap gap-1.5">{SFX_CHOICES.map(([id, l]) => { const on = (cfg.sfxKinds ?? []).includes(id); return <span key={id} className={`inline-flex items-center rounded-full border text-[11px] ${on ? 'bg-violet-500/30 border-violet-300/60 text-white' : 'border-white/10 text-zinc-300'}`}>
+              <button type="button" aria-pressed={on} data-testid={`auto-sfx-${id}`} disabled={running} onClick={() => { const cur = cfg.sfxKinds ?? []; void save({ sfxKinds: on ? cur.filter((x) => x !== id) : [...cur, id].slice(0, 6) }); }} className="pl-2.5 pr-1.5 py-1 rounded-l-full hover:bg-white/5">{l}</button>
+              <button type="button" aria-label={`Hear ${l}`} title="Hear this effect" onClick={() => void auditionSfx(id, l)} className="pr-2 pl-1 py-1 rounded-r-full text-zinc-400 hover:text-white"><Play className="w-3 h-3" /></button></span>; })}</div>
+            <div className="flex items-center gap-3 mt-2 text-[11px] text-zinc-400"><button type="button" data-testid="sfx-variation" disabled={running} onClick={() => void save({ sfxVariation: (cfg.sfxVariation ?? 0) + 1 })} className="px-2.5 py-1 rounded-full border border-white/10 text-zinc-200 hover:bg-white/5 inline-flex items-center gap-1.5"><RefreshCw className="w-3 h-3" />New variation</button><span>{(cfg.sfxKinds?.length ?? 0) > 0 ? `Your chosen effects take turns on the transitions. Variation ${(cfg.sfxVariation ?? 0) + 1}: each press renders different takes.` : 'Nothing chosen: effects are picked automatically to suit the style. Choose some to take control.'}</span></div>
           </div>}
           {(cfg.audioMode === 'library' || cfg.audioMode === 'auto') && <div className="mt-4 border-t border-white/[0.06] pt-3">
             <div className="flex items-center gap-2 flex-wrap"><button className={btn} onClick={() => void loadTracks()} disabled={running}>Browse soundtracks</button>{cfg.soundtrackId && <span className="text-xs text-violet-200">Chosen: {tracks.find((t) => t.id === cfg.soundtrackId)?.label ?? cfg.soundtrackId} <button className="underline ml-1 text-zinc-400" onClick={() => void save({ soundtrackId: null as never })}>clear</button></span>}</div>

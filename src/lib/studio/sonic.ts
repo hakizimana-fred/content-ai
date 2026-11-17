@@ -3,6 +3,7 @@ import {
   normalise, widen, type Stereo, type Wave,
 } from './dsp.ts';
 import { AUDIO_MOODS } from './plan.ts';
+import { assignHarmony, composeMelody, planArrangement, type Form, type Plan, type Traits } from './arrange.ts';
 
 /**
  * Sonic Studio engine: procedural music beds and sound effects built from oscillators, filters, reverb, delay,
@@ -61,6 +62,8 @@ export interface Recipe {
   /** Arrangement (all optional; absent = previous behaviour). layerIn: fraction of the piece at which a layer enters. arc: overall energy shape. outroSec: fade-out length. */
   layerIn?: { arp?: number; perc?: number; piano?: number; bass?: number };
   arc?: 'steady' | 'rise' | 'arch'; outroSec?: number;
+  /** Form (how the energy moves over a long piece), a second progression borrowed from a compatible style for the Variation section, and the rhythmic feel a blend asks for. */
+  form?: Form; altProg?: number[]; feel?: 'straight' | 'double' | 'half'; lead?: { wave?: Wave; level?: number };
 }
 export type Mood = (typeof AUDIO_MOODS)[number];
 
@@ -100,13 +103,14 @@ function addNote(buf: Float32Array, start: number, hold: number, hz: number, wav
   }
 }
 
-function drum(buf: Float32Array, at: number, kind: 'kick' | 'snare' | 'hat' | 'tom' | 'conga' | 'shaker', level: number, pitch = 1, r = rng(1)) {
+function drum(buf: Float32Array, at: number, kind: 'kick' | 'snare' | 'hat' | 'tom' | 'conga' | 'shaker' | 'crash', level: number, pitch = 1, r = rng(1)) {
   const i0 = secToN(at);
-  const len = kind === 'kick' ? 0.35 : kind === 'tom' ? 0.8 : kind === 'conga' ? 0.22 : kind === 'snare' ? 0.22 : kind === 'shaker' ? 0.07 : 0.06;
+  const len = kind === 'crash' ? 1.6 : kind === 'kick' ? 0.35 : kind === 'tom' ? 0.8 : kind === 'conga' ? 0.22 : kind === 'snare' ? 0.22 : kind === 'shaker' ? 0.07 : 0.06;
   const n = secToN(len); let ph = 0; let lp = 0;
   for (let i = 0; i < n && i0 + i < buf.length; i++) {
     const t = i / SR; let v = 0;
     if (kind === 'kick') { const f = 45 + 110 * Math.exp(-t * 28); ph += f / SR; v = Math.sin(2 * Math.PI * ph) * Math.exp(-t * 9); }
+    else if (kind === 'crash') { const noise = r() * 2 - 1; lp = lp * 0.15 + noise * 0.85; v = (noise - lp) * Math.exp(-t * 2.6) * 0.7; }
     else if (kind === 'tom') { const f = (60 + 70 * Math.exp(-t * 14)) * pitch; ph += f / SR; v = Math.sin(2 * Math.PI * ph) * Math.exp(-t * 4.5); }
     else if (kind === 'conga') { const f = (190 + 90 * Math.exp(-t * 50)) * pitch; ph += f / SR; v = Math.sin(2 * Math.PI * ph) * Math.exp(-t * 20) + (r() * 2 - 1) * 0.1 * Math.exp(-t * 80); }
     else if (kind === 'snare') { const noise = r() * 2 - 1; lp = lp * 0.4 + noise * 0.6; v = (noise - lp) * Math.exp(-t * 22) * 0.8 + Math.sin(2 * Math.PI * 185 * t) * Math.exp(-t * 28) * 0.4; }
@@ -115,7 +119,14 @@ function drum(buf: Float32Array, at: number, kind: 'kick' | 'snare' | 'hat' | 't
   }
 }
 
-export interface MusicOptions { mood: Exclude<Mood, 'none'>; intensity: 'low' | 'medium' | 'high'; seconds: number; seed?: number; overrides?: Partial<Recipe> }
+export interface MusicOptions {
+  mood: Exclude<Mood, 'none'>; intensity: 'low' | 'medium' | 'high'; seconds: number; seed?: number; overrides?: Partial<Recipe>;
+  /** Compose a full structured piece (opening, development, build, climax, resolution) for this duration. Default: on for 12 s and longer; shorter clips are stings. */
+  structure?: boolean;
+  /** Optional atmospheric lead-in / wind-down, in seconds (rounded to whole bars, max 4). The beat grid stays on bar lines from t=0. */
+  introPadSec?: number; outroPadSec?: number;
+}
+export const MIN_STRUCTURED_SECONDS = 12;
 
 /** The exact tempo renderMusic() uses for a mood+seed (beats start at t=0), so editors can cut on the beat without detection. */
 export function musicBpm(mood: Exclude<Mood, 'none'>, seed = 1, overrides?: Partial<Recipe>): number {
@@ -124,6 +135,7 @@ export function musicBpm(mood: Exclude<Mood, 'none'>, seed = 1, overrides?: Part
 
 export async function renderMusic(o: MusicOptions): Promise<Stereo> {
   const rc: Recipe = { ...RECIPES[o.mood], ...(o.overrides ?? {}) };
+  if (o.structure ?? o.seconds >= MIN_STRUCTURED_SECONDS) return renderStructured(o, rc);
   const seed = o.seed ?? 1, R = rng(seed * 7919 + 13);
   const I = o.intensity === 'low' ? 0.65 : o.intensity === 'high' ? 1.25 : 1;
   const bpm = rc.bpm * (1 + ((seed % 5) - 2) * 0.015); // small tempo variation per seed => audibly different variations
@@ -201,6 +213,164 @@ export async function renderMusic(o: MusicOptions): Promise<Stereo> {
   out.l = compress(eq(out.l, tilt), 0.6, 2.2, 0.02, 0.2); out.r = compress(eq(out.r, tilt), 0.6, 2.2, 0.02, 0.2);
   const final = { l: out.l.subarray(0, secToN(o.seconds)), r: out.r.subarray(0, secToN(o.seconds)) };
   return normalise(final, 0.7);
+}
+
+// ================= structured composition (duration-aware) =================
+
+export function traitsOf(rc: Recipe): Traits {
+  const drive = rc.perc === 'four' || rc.perc === 'afro' || rc.arp?.div === 4;
+  const form: Form = rc.form ?? (rc.perc === 'cinematic' && rc.build ? 'dramatic' : drive ? 'modern' : rc.perc === 'none' && !rc.arp ? 'minimal' : rc.piano && rc.pianoLevel >= 0.7 ? 'elegant' : 'steady');
+  return { build: rc.build, drive, perc: rc.perc !== 'none', bass: rc.bass !== 'none', arp: !!rc.arp, piano: rc.piano, scaleLen: SCALES[rc.scale].length, progLen: rc.prog.length, form, liftable: rc.scale === 'major' || rc.scale === 'pentMajor', altProg: rc.altProg };
+}
+const tempoFor = (rc: Recipe, seed: number) => rc.bpm * (1 + ((seed % 5) - 2) * 0.015);
+
+/** The plan a render will follow (sections, harmony, melody). Exposed so the UI can describe the arrangement and tests can verify the structure without synthesising audio. */
+export function planMusic(o: MusicOptions) {
+  const rc: Recipe = { ...RECIPES[o.mood], ...(o.overrides ?? {}) }, seed = o.seed ?? 1, T = traitsOf(rc);
+  const plan = planArrangement({ seconds: o.seconds, bpm: tempoFor(rc, seed), seed, traits: T, introPadSec: o.introPadSec, outroPadSec: o.outroPadSec });
+  assignHarmony(plan, rc.prog, T);
+  return { plan, melody: composeMelody(plan, seed, T.scaleLen, T.drive), traits: T, recipe: rc };
+}
+export const describePlan = (plan: Plan): string[] => plan.sections.map((s) => {
+  const a = s.start * plan.bar, b = Math.min(plan.seconds, (s.start + s.bars) * plan.bar), f = (x: number) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
+  return `${s.kind[0].toUpperCase()}${s.kind.slice(1)} ${f(a)}–${f(b)} (${s.bars} bar${s.bars === 1 ? '' : 's'})`;
+});
+
+/** Soft-attack noise sweep: rising (builds) or falling (breakdown entries). Pure noise through a one-pole filter whose cutoff moves. */
+function addSweep(buf: Float32Array, start: number, dur: number, level: number, rising: boolean, r: () => number) {
+  const i0 = secToN(start), n = secToN(dur); let lp = 0;
+  for (let i = 0; i < n && i0 + i < buf.length; i++) {
+    const u = i / n, a = rising ? 0.03 + 0.55 * u * u : 0.5 - 0.46 * u, env = rising ? u * u : (1 - u) * (1 - u);
+    const nz = r() * 2 - 1; lp += (nz - lp) * a; buf[i0 + i] += lp * env * level;
+  }
+}
+function pianoNote(buf: Float32Array, at: number, midi: number, level: number, long = 1) {
+  for (const [h, hl] of [[1, 1], [2, 0.4], [3, 0.18], [4, 0.08]] as const) addNote(buf, at, 0.01, midiToHz(midi) * h, 'sine', 0.002, (0.9 * long) / h, 0, (1.1 * long) / h + 0.4, level * hl);
+}
+
+async function renderStructured(o: MusicOptions, rc: Recipe): Promise<Stereo> {
+  const seed = o.seed ?? 1, R = rng(seed * 7919 + 13), RL = rng(seed * 53 + 9);
+  const I = o.intensity === 'low' ? 0.65 : o.intensity === 'high' ? 1.25 : 1;
+  const bpm = tempoFor(rc, seed), beat = 60 / bpm, step = beat / 4;
+  const { plan, melody } = planMusic(o), bar = plan.bar;
+  const scale = SCALES[rc.scale], SL = scale.length;
+  const root = rc.root + [0, 0, 2, -2, 5, -5][seed % 6];
+  const total = o.seconds + 0.5, secs = o.seconds;
+  const padL = mono(total), padR = mono(total), bass = mono(total), arp = mono(total), pno = mono(total), perc = mono(total), tex = mono(total), lead = mono(total), bell = mono(total), fx = mono(total);
+  const pianoLead = rc.piano && rc.pianoLevel >= 0.6 && RL() < 0.7;
+  const leadWave: Wave = rc.lead?.wave ?? ([rc.arp?.wave === 'square' ? 'tri' : rc.arp?.wave ?? 'tri', 'tri', 'sine'] as Wave[])[Math.floor(RL() * 3)];
+  const dens = (e: number) => (e < 0.4 ? 0 : e < 0.72 ? 1 : 2);
+  const texEnv = new Float32Array(plan.bars);
+
+  for (let b = 0; b < plan.bars; b++) {
+    const p = plan.perBar[b], t0 = b * bar, E = p.energy, Lg = p.layers, kroot = root + p.keyShift, last = p.last;
+    texEnv[b] = Lg.tex;
+    const tones = p.padOnly || (p.section === 'intro' && p.idx === 0) ? [0, 4] : p.section === 'climax' || p.section === 'variation' ? [0, 2, 4, SL] : [0, 2, 4];
+    const chord = [0, 2, 4].map((k) => degNote(scale, kroot + 12, p.chord + k));
+    const padHold = last ? Math.min(secs - t0 - 0.2, bar * 1.1 + 0.4) : bar * 0.95, padRel = last ? 1.4 : bar * 0.4, padLvl = rc.pad.level * 0.4 * Lg.pad * (0.75 + 0.25 * E);
+    for (const [k, off] of tones.entries()) {
+      const m = degNote(scale, kroot + 12, p.chord + off);
+      addNote(padL, t0, padHold, midiToHz(m), rc.pad.wave, bar * 0.35, 0.3, 0.8, padRel, padLvl, rc.pad.detune, 0.15 * (k + 1));
+      addNote(padR, t0, padHold, midiToHz(m), rc.pad.wave, bar * 0.35, 0.3, 0.8, padRel, padLvl, -rc.pad.detune, 0.2 * (k + 1));
+    }
+    // ---- bass
+    const bn = degNote(scale, kroot - 12, p.chord);
+    if (rc.bass !== 'none' && Lg.bass > 0) {
+      const bl = rc.bassLevel * Lg.bass;
+      if (last) addNote(bass, t0, Math.min(secs - t0 - 0.3, bar * 1.0), midiToHz(bn), 'sine', 0.05, 0.2, 0.85, 1.0, bl * 0.6);
+      else if (rc.bass === 'sub') { addNote(bass, t0, bar * (p.busy ? 0.45 : 0.9), midiToHz(bn), 'sine', 0.05, 0.2, 0.85, 0.3, bl * 0.7); if (p.busy) addNote(bass, t0 + beat * 2, beat * 1.8, midiToHz(degNote(scale, kroot - 12, p.chord + 4)), 'sine', 0.05, 0.2, 0.8, 0.3, bl * 0.55); }
+      else for (let s = 0; s < 8; s++) {
+        const accent = rc.perc === 'afro' ? [0, 3, 5, 6].includes(s) : s % 2 === 0;
+        if (accent && !(p.section === 'intro' && s % 4)) addNote(bass, t0 + s * step * 2, step * 1.6, midiToHz(bn + (s === 6 && rc.perc !== 'four' ? 7 : 0)), 'saw', 0.004, 0.08, 0.5, 0.06, bl * 0.35);
+      }
+    }
+    // ---- arpeggio (enters in the development, thins to a solo in the breakdown, drives the climax)
+    if (rc.arp && Lg.arp > 0 && !last) {
+      const per = rc.arp.div === 4 ? 16 : 8, dur = bar / per, tn = [chord[0] + 12, chord[1] + 12, chord[2] + 12, chord[1] + 24];
+      const keep = p.section === 'breakdown' ? 0.3 : 0.4 + 0.5 * E;
+      for (let s = 0; s < per; s++) if (R() < keep) addNote(arp, t0 + s * dur, dur * 0.8, midiToHz(tn[(s * (R() < 0.2 ? 3 : 1)) % tn.length]), rc.arp.wave, 0.003, 0.09, 0.15, 0.09, rc.arp.level * 0.3 * Lg.arp * Math.min(1, I));
+    }
+    // ---- piano: a sparse statement, then chords, then featured broken chords in the breakdown, then a rolled final chord
+    if (rc.piano && Lg.piano > 0) {
+      const pl = rc.pianoLevel * 0.16 * Lg.piano;
+      if (last) chord.forEach((m, k) => pianoNote(pno, t0 + k * 0.22, m + (k === 0 ? 0 : 12), pl * 1.2, 2.2));
+      else if (p.section === 'breakdown') for (let s = 0; s < 16; s += 4) pianoNote(pno, t0 + s * step, chord[(s / 4) % 3] + 12, pl * 0.8, 1.2);
+      else {
+        const hits = p.section === 'intro' ? [0] : rc.perc === 'none' || rc.perc === 'minimal' ? [0, 8] : [0, 6, 10];
+        for (const s of hits) for (const [k, m] of chord.entries()) if (k === 0 || s === 0 || R() < 0.5) pianoNote(pno, t0 + s * step + k * 0.012, m + (k === 0 ? 0 : 12), pl);
+      }
+    }
+    // ---- melody: the evolving lead, doubled by a bell where the arrangement wants it
+    for (const e of melody[b]) {
+      const at = t0 + e.s * step, hold = Math.max(step, e.d * step * 0.92), midi = degNote(scale, kroot + 12, e.deg), lv = 0.2 * (rc.lead?.level ?? 1) * e.v * (0.6 + 0.4 * E) * Math.min(1.1, I);
+      if (at >= secs) continue;
+      if (pianoLead) pianoNote(lead, at, midi, lv * 0.9, Math.min(2, 0.6 + e.d / 8));
+      else addNote(lead, at, hold, midiToHz(midi), leadWave, 0.012, 0.12, 0.6, last ? 1.1 : 0.18, lv, 5, e.d >= 6 ? 5.2 : 0);
+      if (Lg.bell > 0 && e.s % 8 === 0) { addNote(bell, at, 0.05, midiToHz(midi + 12), 'sine', 0.002, 0.7, 0, 0.8, 0.07 * Lg.bell); addNote(bell, at, 0.05, midiToHz(midi + 12) * 2.76, 'sine', 0.002, 0.25, 0, 0.3, 0.025 * Lg.bell); }
+    }
+    // ---- percussion: density follows the energy curve; fills close sections, a gap precedes the drop, an impact marks the arrival
+    if (rc.perc !== 'none' && Lg.perc > 0 && !last) {
+      const style = rc.perc, d = rc.feel === 'half' ? Math.min(1, dens(E)) : dens(E), L = rc.percLevel * I * 0.5 * Lg.perc, fillBar = p.fill, gap = p.gap, dbl = rc.feel === 'double' || p.busy;
+      for (let s = 0; s < 16; s++) {
+        const at = t0 + s * step; if (gap && s >= 14) continue;
+        if (fillBar && s >= 12) {
+          const u = (s - 11) / 4;
+          if (style === 'afro') drum(perc, at, 'conga', L * 0.7 * u, 1 + u * 0.25, R); else if (style === 'cinematic') drum(perc, at, 'tom', L * 0.8 * u, 0.8 + u * 0.4); else drum(perc, at, 'snare', L * 0.4 * u, 1, R);
+          continue;
+        }
+        if (style === 'four') {
+          if (s % 4 === 0 && (d > 0 || s === 0)) drum(perc, at, 'kick', L * 1.1);
+          if (d > 0 && s % 8 === 4) drum(perc, at, 'snare', L * 0.8, 1, R);
+          if (d > 0 && s % 4 === 2) drum(perc, at, 'hat', L * 0.45, 1, R);
+          if (d === 2 && dbl && s % 2 === 1) drum(perc, at, 'hat', L * 0.22, 1, R);
+          if (d === 2 && s === 15 && b % 2) drum(perc, at, 'kick', L * 0.5);
+        } else if (style === 'soft') {
+          if (s === 0 || (s === 8 && d > 0)) drum(perc, at, 'kick', L * 0.8);
+          if (d > 0 && (s === 4 || s === 12)) drum(perc, at, 'hat', L * 0.5, 1, R);
+          if (d === 2 && (s % 4 === 2 || s === 10)) drum(perc, at, s === 10 ? 'kick' : 'hat', L * 0.4, 1, R);
+        } else if (style === 'cinematic') {
+          if (s === 0 && (d > 0 || b % 2 === 0)) drum(perc, at, 'tom', L * 1.2, 0.8);
+          if (d > 0 && s === 10 && b % 2 === 1) drum(perc, at, 'tom', L * 0.8, 1.1);
+          if (d === 2 && (s === 6 || s === 14)) drum(perc, at, 'tom', L * 0.6, 0.9 + (s === 14 ? 0.2 : 0));
+        } else if (style === 'afro') {
+          if ([0, 6, 10].includes(s) && (d > 0 || s === 0)) drum(perc, at, 'kick', L * 0.9);
+          if (d > 0 && [3, 6, 9, 11, 14].includes(s)) drum(perc, at, 'conga', L * 0.75, s % 2 ? 1.25 : 1, R);
+          if (d === 2 && [1, 5, 13].includes(s)) drum(perc, at, 'conga', L * 0.45, 1.4, R);
+          drum(perc, at, 'shaker', L * (s % 2 ? 0.18 : 0.3) * (d === 0 ? 0.6 : 1), 1, R);
+        } else if (style === 'minimal') { if (s % (d === 2 ? 2 : 4) === 0 && (d > 0 || s === 0)) drum(perc, at, 'hat', L * 0.4, 1, R); }
+      }
+      if (p.impact) { drum(perc, t0, 'crash', L * 0.9, 1, R); drum(perc, t0, style === 'afro' ? 'conga' : 'tom', L * 1.4, 0.7, R); }
+    } else if (p.impact && !last) { drum(fx, t0, 'crash', 0.35, 1, R); drum(fx, t0, 'tom', 0.5, 0.7, R); }
+    // ---- transitions
+    if (p.riser && p.len >= 3 && p.idx === p.len - 2) addSweep(fx, t0, bar * 2, 0.5 * Math.min(1.2, I), true, R);
+    if (p.sweepDown) addSweep(fx, t0, bar, 0.3, false, R);
+    await yieldLoop();
+  }
+  if (rc.texture > 0) { let lp = 0; for (let i = 0; i < tex.length; i++) { lp = lp * 0.97 + (RL() * 2 - 1) * 0.03; tex[i] = lp * rc.texture * 6; } }
+
+  const cut = rc.pad.cutoff * (0.7 + 0.3 * I);
+  const padLf = filterBuf(padL, 'lp', cut, 0.9), padRf = filterBuf(padR, 'lp', cut, 0.9);
+  const bassF = filterBuf(bass, 'lp', 400, 0.7);
+  const arpF = delay(filterBuf(arp, 'lp', 5000, 0.7), beat * 0.75, 0.38, 0.35);
+  const pnoF = reverb(pno, 0.7, 0.45, 0.5);
+  const percF = rc.perc === 'cinematic' ? reverb(perc, 0.9, 0.5, 0.4) : compress(perc, 0.5, 3, 0.005, 0.1);
+  const texF = filterBuf(tex, 'bp', 900, 0.4);
+  const leadF = reverb(delay(filterBuf(lead, 'lp', 4800, 0.7), beat * 0.5, 0.3, 0.2), 0.6, 0.25, 0.5);
+  const bellF = reverb(bell, 0.8, 0.4, 0.4), fxF = reverb(fx, 0.6, 0.3, 0.4);
+
+  const out = stereo(total), fadeOut = Math.min(1.6, plan.tail + bar * 0.5), n = Math.min(out.l.length, Math.round(total * SR));
+  for (let i = 0; i < n; i++) {
+    const t = i / SR, pos = Math.max(0, Math.min(plan.bars - 1, t / bar - 0.5)), b0 = Math.floor(pos), b1 = Math.min(plan.bars - 1, b0 + 1), f = pos - b0;
+    const e = plan.perBar[b0].energy * (1 - f) + plan.perBar[b1].energy * f, tx = texEnv[b0] * (1 - f) + texEnv[b1] * f;
+    const head = Math.min(1, t / 0.5), left = secs - t, tailG = left >= fadeOut ? 1 : Math.max(0, 0.5 - 0.5 * Math.cos(Math.PI * Math.max(0, left) / fadeOut));
+    const pad = (padLf[i] + padRf[i]) * 0.5, mid = pad * (0.55 + 0.45 * e) + bassF[i] + arpF[i] * Math.min(1, I) + pnoF[i] + percF[i] + leadF[i] + bellF[i] + fxF[i] + texF[i] * tx;
+    const g = head * tailG;
+    out.l[i] = (mid + (padLf[i] - pad) * 0.8) * g; out.r[i] = (mid + (padRf[i] - pad) * 0.8) * g;
+  }
+  out.l = reverb(out.l, rc.reverb * 0.6, 0.12 + rc.reverb * 0.14, 0.45); out.r = reverb(out.r, rc.reverb * 0.6, 0.12 + rc.reverb * 0.14, 0.45, 1);
+  const tilt: [import('./dsp.ts').FilterType, number, number, number][] = [['highshelf', 6000, 0.7, rc.bright], ['lowshelf', 120, 0.7, 1.5], ['hp', 28, 0.7, 0]];
+  out.l = compress(eq(out.l, tilt), 0.7, 2.0, 0.02, 0.25); out.r = compress(eq(out.r, tilt), 0.7, 2.0, 0.02, 0.25);
+  return normalise({ l: out.l.subarray(0, secToN(secs)), r: out.r.subarray(0, secToN(secs)) }, 0.7);
 }
 
 // ================= sound effects =================

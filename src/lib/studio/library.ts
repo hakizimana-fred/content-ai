@@ -14,6 +14,8 @@ export interface LibraryItem {
   /** Imported (user-supplied) track: stored with its original extension and user-entered metadata. */
   /** Composed from several style ingredients: which, what character, how they were combined, and the set (group) it was generated with. */
   styles?: string[]; character?: string; group?: string; arrangement?: { notes: string[]; contributions: Record<string, string>; bpm: number; leader: string };
+  /** The musical form of a duration-aware composition: its sections with timings, and any intro/outro padding that was requested. */
+  structure?: { sections: string[]; introPadSec?: number; outroPadSec?: number };
   imported?: boolean; ext?: string; genre?: string; bpm?: number; beatOffset?: number; energy?: 'low' | 'medium' | 'high'; description?: string;
 }
 /** What the Sound Library shows: stored fields plus derived tempo/energy/genre/description for generated tracks. */
@@ -57,7 +59,8 @@ export async function withRenderLock<T>(fn: () => Promise<T>): Promise<T> {
   busy = true; try { return await fn(); } finally { busy = false; }
 }
 export function limitsForTier(tier: 'low' | 'standard' | 'high') {
-  return tier === 'low' ? { maxSeconds: 60, maxVariations: 2 } : tier === 'standard' ? { maxSeconds: 90, maxVariations: 4 } : { maxSeconds: 120, maxVariations: 6 };
+  // a 90 s structured piece renders in roughly 13 s on a 4-core laptop, so even the low tier can compose a full 90 s advert soundtrack
+  return tier === 'low' ? { maxSeconds: 90, maxVariations: 2 } : tier === 'standard' ? { maxSeconds: 120, maxVariations: 4 } : { maxSeconds: 180, maxVariations: 6 };
 }
 
 export function favouriteIds(): Set<string> { return new Set(studioDb().prepare('SELECT id FROM favourites').all().map((r) => r.id as string)); }

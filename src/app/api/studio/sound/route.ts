@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { detectHardware } from '@/lib/studio/hardware';
-import { SFX_KINDS, SFX_LABELS, SOUND_CATEGORIES, SOUND_LICENSE, parseSoundPrompt, renderMusic, renderSfx, renderSignature, type SfxKind } from '@/lib/studio/sonic';
+import { SFX_KINDS, SFX_LABELS, SOUND_CATEGORIES, SOUND_LICENSE, parseSoundPrompt, renderMusic, renderSfx, renderSignature, planMusic, describePlan, MIN_STRUCTURED_SECONDS, type SfxKind } from '@/lib/studio/sonic';
 import { deleteItem, limitsForTier, listEntries, saveItem, withRenderLock } from '@/lib/studio/library';
 import { AUDIO_MOODS, INTENSITIES } from '@/lib/studio/plan';
 import { blendStyles, characterTitle, isStyle, variationPlan, STYLES, STYLE_LABEL, STYLE_BLURB } from '@/lib/studio/blend';
@@ -35,6 +35,10 @@ export async function POST(request: NextRequest) {
         const item = saveItem(renderSfx(kind, seed), { kind: 'sfx', label: SFX_LABELS[kind], sfx: kind, seed, seconds: 0, renderMs: Date.now() - t0 });
         return NextResponse.json({ success: true, items: [item] });
       }
+      // optional atmospheric lead-in / wind-down (whole bars, max 4) so a soundtrack can breathe around the footage
+      const pad = (v: unknown) => { const n = Number(v ?? 0); return Number.isFinite(n) ? Math.max(0, Math.min(12, n)) : 0; };
+      const pads = { introPadSec: pad(b.introPadSec), outroPadSec: pad(b.outroPadSec) };
+      const structureOf = (mood: string, secs: number, seed: number, overrides: unknown, intensity?: string) => secs >= MIN_STRUCTURED_SECONDS ? { sections: describePlan(planMusic({ mood: mood as never, intensity: (intensity as never) ?? 'medium', seconds: secs, seed, overrides: overrides as never, ...pads }).plan), ...pads } : undefined;
       if (Array.isArray(b.styles)) {                     // composition from several style ingredients
         const styles = b.styles.filter(isStyle); if (!styles.length || styles.length !== b.styles.length) return NextResponse.json({ success: false, error: 'styles must be a list of known style ids.' }, { status: 400 });
         const secs = Math.round(Number(b.seconds ?? 30)), n = Math.round(Number(b.variations ?? 4));
@@ -43,10 +47,10 @@ export async function POST(request: NextRequest) {
         const baseSeed = Number.isInteger(b.seed) ? (b.seed as number) : Math.floor(Math.random() * 9000) + 1, group = crypto.randomBytes(5).toString('hex'), items = [], MOOD_OF: Record<string, string> = { ambient: 'minimal', dramatic: 'suspense', experimental: 'technology' };
         variationPlan(n).forEach(() => {}); const plan = variationPlan(n);
         for (let i = 0; i < n; i++) {
-          const bl = blendStyles(styles, plan[i], i), seed = baseSeed + i * 7, t0 = Date.now(), intensity = (INTENSITIES as readonly string[]).includes(b.intensity as string) ? (b.intensity as string) : 'medium';
-          const audio = await renderMusic({ mood: (MOOD_OF[bl.leader] ?? bl.leader) as never, intensity: intensity as never, seconds: secs, seed, overrides: bl.recipe });
+          const bl = blendStyles(styles, plan[i], i), seed = baseSeed + i * 7, t0 = Date.now(), intensity = (INTENSITIES as readonly string[]).includes(b.intensity as string) ? (b.intensity as string) : (typeof b.prompt === 'string' && b.prompt.trim() ? parseSoundPrompt(b.prompt).intensity : undefined) ?? 'medium';
+          const audio = await renderMusic({ mood: (MOOD_OF[bl.leader] ?? bl.leader) as never, intensity: intensity as never, seconds: secs, seed, overrides: bl.recipe, ...pads });
           items.push(saveItem(audio, { kind: 'music', label: `${bl.label}${n > 4 ? ` #${i + 1}` : ''}`, mood: MOOD_OF[bl.leader] ?? bl.leader, intensity, seed, seconds: secs, overrides: bl.recipe as unknown as Record<string, unknown>, renderMs: Date.now() - t0,
-            styles: styles.map((s) => STYLE_LABEL[s]), character: characterTitle(bl.character), group, arrangement: { notes: bl.notes, contributions: bl.contributions, bpm: bl.bpm, leader: STYLE_LABEL[bl.leader] } }));
+            structure: structureOf(MOOD_OF[bl.leader] ?? bl.leader, secs, seed, bl.recipe, intensity), styles: styles.map((s) => STYLE_LABEL[s]), character: characterTitle(bl.character), group, arrangement: { notes: bl.notes, contributions: bl.contributions, bpm: bl.bpm, leader: STYLE_LABEL[bl.leader] } }));
         }
         return NextResponse.json({ success: true, items, group });
       }
@@ -62,8 +66,8 @@ export async function POST(request: NextRequest) {
       const items = [];
       for (let i = 0; i < variations; i++) {
         const seed = baseSeed + i, t0 = Date.now();
-        const audio = await renderMusic({ mood: mood as never, intensity: (intensity as never) ?? 'medium', seconds, seed, overrides });
-        items.push(saveItem(audio, { kind: 'music', label: `${mood} #${seed}`, mood, intensity: intensity ?? 'medium', seed, seconds, prompt: prompt || undefined, overrides, renderMs: Date.now() - t0 }));
+        const audio = await renderMusic({ mood: mood as never, intensity: (intensity as never) ?? 'medium', seconds, seed, overrides, ...pads });
+        items.push(saveItem(audio, { kind: 'music', label: `${mood} #${seed}`, mood, intensity: intensity ?? 'medium', seed, seconds, prompt: prompt || undefined, overrides, structure: structureOf(mood, seconds, seed, overrides, intensity), renderMs: Date.now() - t0 }));
       }
       return NextResponse.json({ success: true, items, interpreted: matched });
     });

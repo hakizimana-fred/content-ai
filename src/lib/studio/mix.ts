@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { encodeWav } from './dsp.ts';
-import { renderMusic, renderSfx, renderSignature, type SfxKind } from './sonic.ts';
+import { MIN_STRUCTURED_SECONDS, renderMusic, renderSfx, renderSignature, type SfxKind } from './sonic.ts';
 import { GRADE_FILTERS, hasAudioWork, type AudioDesignSpec } from './audio-spec.ts';
 
 const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
@@ -77,7 +77,8 @@ export async function applyAudioDesign(videoPath: string, spec: AudioDesignSpec,
   } else if (spec.music && spec.mood !== 'none') {
     musicSeconds = Math.ceil(D) + 1;
     const mood = spec.mood;
-    const f = await wav(`music|${mood}|${spec.intensity}|${musicSeconds}|${spec.seed}|${JSON.stringify(spec.overrides ?? {})}`, async () => encodeWav(await renderMusic({ mood, intensity: spec.intensity, seconds: musicSeconds, seed: spec.seed, overrides: spec.overrides })));
+    const structure = spec.musicStructure !== false && musicSeconds >= MIN_STRUCTURED_SECONDS;
+    const f = await wav(`music|v2|${mood}|${spec.intensity}|${musicSeconds}|${spec.seed}|${structure}|${JSON.stringify(spec.overrides ?? {})}`, async () => encodeWav(await renderMusic({ mood, intensity: spec.intensity, seconds: musicSeconds, seed: spec.seed, overrides: spec.overrides, structure })));
     files.push(f); musicIdx = files.length; applied.push(`music bed (${mood}, ${spec.intensity})`);
   } else if (spec.music) skipped.push('music requested but mood is "none"');
 

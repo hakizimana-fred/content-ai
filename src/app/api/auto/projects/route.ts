@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createProject, deleteProject, getProject, listProjects, updateProject } from '@/lib/auto/store';
 import { currentJob } from '@/lib/auto/pipeline';
 import type { AutoConfig } from '@/lib/auto/types';
+import { SFX_KINDS } from '@/lib/studio/sonic';
 
 const bad = (error: string, status = 400) => NextResponse.json({ success: false, error }, { status });
 const idOf = (r: NextRequest) => new URL(r.url).searchParams.get('id') ?? '';
@@ -32,6 +33,8 @@ export function cleanConfig(b: Record<string, unknown>, base: AutoConfig): { ok:
     c.sceneEdits = out;
   }
   if (b.soundtrackStyles !== undefined) { const a = b.soundtrackStyles; if (!Array.isArray(a) || a.length > 6 || !a.every((x) => typeof x === 'string' && /^[a-z_]{3,20}$/.test(x))) return { ok: false, error: 'soundtrackStyles must be a short list of style ids.' }; c.soundtrackStyles = a.length ? (a as string[]) : undefined; }
+  if (b.sfxKinds !== undefined) { const a = b.sfxKinds; if (!Array.isArray(a) || a.length > 6 || !a.every((x) => typeof x === 'string' && (SFX_KINDS as readonly string[]).includes(x))) return { ok: false, error: 'sfxKinds must be a short list of known sound effects.' }; c.sfxKinds = a.length ? (a as string[]) : undefined; }
+  if (b.sfxVariation !== undefined) { const n = Number(b.sfxVariation); if (!Number.isInteger(n) || n < 0 || n > 999) return { ok: false, error: 'sfxVariation must be 0 to 999.' }; c.sfxVariation = n; }
   if (b.soundtrackVariations !== undefined) { const n = Number(b.soundtrackVariations); if (!Number.isInteger(n) || n < 1 || n > 4) return { ok: false, error: 'soundtrackVariations must be 1 to 4.' }; c.soundtrackVariations = n; }
   if (b.fontAssetId !== undefined) { if (b.fontAssetId !== null && (typeof b.fontAssetId !== 'string' || !/^ca_[a-f0-9]{12}$/.test(b.fontAssetId))) return { ok: false, error: 'invalid font id.' }; c.fontAssetId = (b.fontAssetId as string | null) ?? undefined; }
   if (b.fps !== undefined) { if (b.fps !== 24 && b.fps !== 30) return { ok: false, error: 'fps must be 24 or 30.' }; c.fps = b.fps; }

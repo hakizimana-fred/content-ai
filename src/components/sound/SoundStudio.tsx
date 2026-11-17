@@ -3,9 +3,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, Download, Heart, Layers, Loader2, RefreshCw, Search, Sparkles, Trash2, Wand2, X } from 'lucide-react';
 import { Artwork, PlayButton, fmtTime, usePlayer, type PlayerTrack } from './player';
+import { DurationPicker } from './DurationPicker';
 
 export type SoundPick = { mood: string; intensity: string; seed: number; overrides: Record<string, unknown> };
-interface Entry { id: string; kind: 'music' | 'sfx'; label: string; mood?: string; intensity?: string; seed: number; seconds: number; overrides?: Record<string, unknown>; createdAt: number; imported?: boolean; styles?: string[]; character?: string; group?: string;
+interface Entry { id: string; kind: 'music' | 'sfx'; label: string; mood?: string; intensity?: string; seed: number; seconds: number; overrides?: Record<string, unknown>; createdAt: number; imported?: boolean; styles?: string[]; character?: string; group?: string; structure?: { sections: string[]; introPadSec?: number; outroPadSec?: number };
   arrangement?: { notes: string[]; contributions: Record<string, string>; bpm: number; leader: string }; tempo: number | null; energyLevel: 'low' | 'medium' | 'high'; genreLabel: string; descriptionText: string; favourite: boolean; license: { license: string; commercialOk: boolean | null; attribution: string; note: string } }
 interface StyleInfo { id: string; label: string; blurb: string }
 interface Meta { styles: StyleInfo[]; limits: { maxSeconds: number; maxVariations: number }; tier: string; library: Entry[] }
@@ -43,9 +44,9 @@ const TrackCard: React.FC<{ e: Entry; selected: boolean; onSelect: () => void; o
   );
 };
 
-export const SoundStudio: React.FC<{ onUseSound?: (p: SoundPick) => void; hasVideo: boolean }> = ({ onUseSound, hasVideo }) => {
+export const SoundStudio: React.FC<{ onUseSound?: (p: SoundPick) => void; hasVideo: boolean; videoSeconds?: number }> = ({ onUseSound, hasVideo, videoSeconds }) => {
   const [meta, setMeta] = useState<Meta | null>(null); const [err, setErr] = useState<string | null>(null); const [loading, setLoading] = useState(true);
-  const [styles, setStyles] = useState<string[]>([]); const [variations, setVariations] = useState(3); const [seconds, setSeconds] = useState(30); const [intensity, setIntensity] = useState('medium');
+  const [styles, setStyles] = useState<string[]>([]); const [variations, setVariations] = useState(3); const [seconds, setSeconds] = useState(30); const [introPad, setIntroPad] = useState(0); const [outroPad, setOutroPad] = useState(0); const [intensity, setIntensity] = useState('medium');
   const [busy, setBusy] = useState(false); const [group, setGroup] = useState<string[]>([]); const [notes, setNotes] = useState<string[]>([]);
   const [genre, setGenre] = useState(''); const [q, setQ] = useState(''); const [favOnly, setFavOnly] = useState(false); const [sel, setSel] = useState<string[]>([]); const [seedBump, setSeedBump] = useState(1);
   const load = useCallback(async () => { try { setMeta(await api<Meta>('/api/studio/sound')); setErr(null); } catch (e) { setErr((e as Error).message); } finally { setLoading(false); } }, []);
@@ -55,7 +56,7 @@ export const SoundStudio: React.FC<{ onUseSound?: (p: SoundPick) => void; hasVid
   const byId = useMemo(() => new Map(music.map((m) => [m.id, m])), [music]);
   const compose = async () => {
     if (!styles.length) return setErr('Choose at least one style to compose from.'); setBusy(true); setErr(null);
-    try { const d = await api('/api/studio/sound', post({ styles, variations: Math.min(variations, meta?.limits.maxVariations ?? 2), seconds: Math.min(seconds, meta?.limits.maxSeconds ?? 60), intensity, seed: 100 + seedBump * 17 })); setGroup((d.items as { id: string }[]).map((i) => i.id)); setNotes(d.interpreted ?? []); setSeedBump((n) => n + 1); await load(); }
+    try { const d = await api('/api/studio/sound', post({ styles, variations: Math.min(variations, meta?.limits.maxVariations ?? 2), seconds: Math.min(seconds, meta?.limits.maxSeconds ?? 60), intensity, introPadSec: introPad || undefined, outroPadSec: outroPad || undefined, seed: 100 + seedBump * 17 })); setGroup((d.items as { id: string }[]).map((i) => i.id)); setNotes(d.interpreted ?? []); setSeedBump((n) => n + 1); await load(); }
     catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
   const toggleSel = (id: string) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id].slice(-4)));
@@ -81,9 +82,9 @@ export const SoundStudio: React.FC<{ onUseSound?: (p: SoundPick) => void; hasVid
         <div className="flex items-center gap-2 mb-1"><Wand2 className="w-5 h-5 text-violet-300" /><h2 className="text-base font-semibold text-white">Compose from styles</h2></div>
         <p className="text-xs text-zinc-400 mb-3 max-w-2xl">Pick one or more styles. They are ingredients, not stacked tracks: the engine chooses a lead, balances layers, checks tempo compatibility and carves frequency overlap. Where two styles clash they become influences. {meta.limits.maxSeconds}s / {meta.limits.maxVariations} variations max on this {meta.tier}-resource machine.</p>
         <div className="flex flex-wrap gap-2" role="group" aria-label="Styles">{meta.styles.map((s) => <button key={s.id} type="button" data-testid={`style-${s.id}`} aria-pressed={styles.includes(s.id)} title={s.blurb} onClick={() => setStyles((x) => (x.includes(s.id) ? x.filter((y) => y !== s.id) : [...x, s.id].slice(0, 4)))} className={chip(styles.includes(s.id))}>{s.label}</button>)}</div>
-        <div className="grid sm:grid-cols-3 gap-4 mt-4 text-xs text-zinc-300">
+        <div className="mt-4"><DurationPicker value={{ seconds, introPadSec: introPad, outroPadSec: outroPad }} max={meta.limits.maxSeconds} videoSeconds={videoSeconds} disabled={busy} onChange={(v) => { setSeconds(v.seconds); setIntroPad(v.introPadSec); setOutroPad(v.outroPadSec); }} /></div>
+        <div className="grid sm:grid-cols-2 gap-4 mt-4 text-xs text-zinc-300">
           <label>Variations: {Math.min(variations, meta.limits.maxVariations)}<input type="range" min={1} max={meta.limits.maxVariations} value={Math.min(variations, meta.limits.maxVariations)} onChange={(e) => setVariations(Number(e.target.value))} className="w-full accent-violet-400" aria-label="Variations" /></label>
-          <label>Length: {Math.min(seconds, meta.limits.maxSeconds)}s<input type="range" min={10} max={meta.limits.maxSeconds} value={Math.min(seconds, meta.limits.maxSeconds)} onChange={(e) => setSeconds(Number(e.target.value))} className="w-full accent-violet-400" aria-label="Length" /></label>
           <label>Intensity<select value={intensity} onChange={(e) => setIntensity(e.target.value)} className="block w-full mt-1 rounded-lg bg-zinc-950/70 border border-white/10 px-2 py-1.5">{['low', 'medium', 'high'].map((i) => <option key={i}>{i}</option>)}</select></label>
         </div>
         <button type="button" data-testid="compose" onClick={() => void compose()} disabled={busy || !styles.length} className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-violet-500 hover:bg-violet-400 disabled:bg-zinc-700 disabled:text-zinc-400 text-white text-sm font-semibold">
@@ -98,7 +99,8 @@ export const SoundStudio: React.FC<{ onUseSound?: (p: SoundPick) => void; hasVid
           <div className="grid gap-3 lg:grid-cols-2">{groupItems.map((e) => (
             <div key={e.id} className={`${glass} p-3 flex flex-col gap-2`}>
               <ul><TrackCard e={e} selected={sel.includes(e.id)} onSelect={() => toggleSel(e.id)} onFav={() => void fav(e)} onDelete={() => void del(e)} /></ul>
-              <div className="text-[11px] text-zinc-400 px-1"><b className="text-zinc-200">{e.character}</b> · lead: {e.arrangement?.leader} <ul className="mt-1 list-disc pl-4 space-y-0.5">{(e.arrangement?.notes ?? []).slice(0, 3).map((n, i) => <li key={i}>{n}</li>)}</ul></div>
+              <div className="text-[11px] text-zinc-400 px-1"><b className="text-zinc-200">{e.character}</b> · lead: {e.arrangement?.leader} <ul className="mt-1 list-disc pl-4 space-y-0.5">{(e.arrangement?.notes ?? []).slice(0, 3).map((n, i) => <li key={i}>{n}</li>)}</ul>
+                {e.structure?.sections?.length ? <details className="mt-1.5" data-testid="arrangement"><summary className="cursor-pointer text-zinc-300">Arrangement ({e.structure.sections.length} sections)</summary><ol className="mt-1 pl-4 list-decimal space-y-0.5">{e.structure.sections.map((x, i) => <li key={i}>{x}</li>)}</ol></details> : null}</div>
               <div className="flex gap-2 px-1">{hasVideo && onUseSound && e.overrides && e.mood && <button className="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white" onClick={() => onUseSound({ mood: e.mood as string, intensity: e.intensity ?? 'medium', seed: e.seed, overrides: e.overrides as Record<string, unknown> })}>Use in video</button>}<a className="text-xs px-3 py-1.5 rounded-lg border border-white/10 text-zinc-200 hover:bg-white/5 inline-flex items-center gap-1" href={`/api/studio/sound/file?id=${e.id}&download=1`}><Download className="w-3 h-3" />Download</a></div>
             </div>))}</div>
           {notes.length > 0 && <p className="text-[11px] text-zinc-500 mt-2">{notes.join(' · ')}</p>}

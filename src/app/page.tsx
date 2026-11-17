@@ -839,7 +839,7 @@ export default function VideoCutterPage() {
         ) : currentView === 'auto' ? (
           <AutoStudioWorkspace identities={identities.map((i) => ({ id: i.id, name: i.name }))} />
         ) : currentView === 'studio' ? (
-          <StudioWorkspace onUseSound={handleUseSound} hasVideo={!!currentSource} />
+          <StudioWorkspace onUseSound={handleUseSound} hasVideo={!!currentSource} videoSeconds={duration || undefined} />
         ) : currentView === 'moments' ? (
           <MomentsWorkspace
             source={currentSource}

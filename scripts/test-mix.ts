@@ -6,7 +6,7 @@ import path from 'node:path';
 import { applyAudioDesign, planSfx, probeMedia } from '../src/lib/studio/mix.ts';
 import type { AudioDesignSpec } from '../src/lib/studio/audio-spec.ts';
 
-const base: AudioDesignSpec = { mood: 'cinematic', intensity: 'medium', music: true, musicVolume: 0.15, soundEffects: true, ducking: true, ending: 'dramatic_resolution', seed: 1, sfxCues: [], grade: 'none' };
+const base: AudioDesignSpec = { mood: 'cinematic', intensity: 'medium', music: true, musicVolume: 0.15, soundEffects: true, ducking: true, ending: 'dramatic_resolution', seed: 1, sfxCues: [], grade: 'none', musicStructure: false };
 
 // ---- pure placement logic ----
 const p = planSfx(base, 30);

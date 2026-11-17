@@ -63,7 +63,7 @@ export interface AutoAsset {
 
 export interface AutoConfig {
   prompt: string; format: Format; durationSec: number; style: StyleChoice; audioMode: AudioMode;
-  soundtrackId?: string; /** style ingredients for a composed soundtrack (ids from blend.ts) and how many alternatives to compose */ soundtrackStyles?: string[]; soundtrackVariations?: number; headline?: string; cta?: string; identityId?: string;
+  soundtrackId?: string; /** style ingredients for a composed soundtrack (ids from blend.ts) and how many alternatives to compose */ soundtrackStyles?: string[]; soundtrackVariations?: number; /** sound effects the user chose for transitions (ids from sonic.ts SFX_KINDS); empty = chosen automatically */ sfxKinds?: string[]; /** variation number for the effects: each bump renders different takes */ sfxVariation?: number; headline?: string; cta?: string; identityId?: string;
   /** keep the user's tray order instead of letting the director arrange shots */
   keepOrder: boolean; captions: boolean;
   /** use the local language model to interpret the instruction (slower on CPU); rules always run first */

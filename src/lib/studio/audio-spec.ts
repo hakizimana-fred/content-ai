@@ -22,6 +22,8 @@ export interface AudioDesignSpec {
   musicFile?: string;
   /** Minimum seconds between transition cues (default 2.5; auto-edited videos with short shots use less). */
   cueGap?: number;
+  /** Compose the generated music bed as a full structured piece for the video's length (default on). false = a steady, constant-level bed. */
+  musicStructure?: boolean;
 }
 
 export const GRADE_FILTERS: Record<Exclude<Grade, 'none'>, string> = {

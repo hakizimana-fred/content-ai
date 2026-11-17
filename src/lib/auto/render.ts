@@ -8,6 +8,7 @@ import { toTimedWords, type TimedWord } from '../editor/captions.ts';
 import { composeAss, type OverlaySpec } from '../studio/overlay.ts';
 import { applyAudioDesign } from '../studio/mix.ts';
 import { GRADE_FILTERS, hasAudioWork, type AudioDesignSpec } from '../studio/audio-spec.ts';
+import { SFX_KINDS, type SfxKind } from '../studio/sonic.ts';
 import { PY, SCRIPT, run } from './media.ts';
 import { assetPath, assetsDir, renderDir, AUTO_DIR } from './store.ts';
 import type { AutoAsset, AutoProject, Shot, Timeline } from './types.ts';
@@ -213,11 +214,12 @@ export async function renderProject(o: RenderOptions): Promise<RenderResult> {
   applied.push(`${t.shots.length} shots, ${t.shots.length - 1} transitions placed on the beat${t.bpm ? ` (${t.bpm.toFixed(0)} BPM)` : ''}`);
 
   // ---- audio: music (chosen/generated), transition SFX, ducking under speech, loudness, ending
+  const pickKinds = (project.config.sfxKinds ?? []).filter((k): k is SfxKind => (SFX_KINDS as readonly string[]).includes(k)); // user-chosen effects cycle across the transitions
   const wantMusic = soundtrack.source === 'library' || soundtrack.source === 'tray' || soundtrack.source === 'generated';
   const hasSpeech = speechAssets.length > 0;
   const spec: AudioDesignSpec = { mood: soundtrack.mood ?? 'none', intensity: soundtrack.intensity, music: wantMusic, musicVolume: Math.min(1, (hasSpeech ? 0.2 : 0.38) * (project.config.musicGain ?? 1)), soundEffects: project.config.audioMode !== 'original',
     ducking: true, ending: project.config.audioMode === 'original' ? 'none' : (t.text.cta || t.shots.some((s) => s.scene?.cta)) ? 'call_to_action' : profile.id === 'cinematic' || profile.id === 'documentary' ? 'clean_fade' : 'dramatic_resolution',
-    seed: soundtrack.seed ?? 1, sfxCues: t.shots.filter((s) => s.transitionOut && s.cutAt > 1.5).map((s) => ({ t: Math.max(0, s.cutAt - (s.transitionOut!.type === 'cut' ? 0 : 0.18)), kind: s.transitionOut!.type === 'cut' ? 'click' as const : profile.transitionSfx })),
+    seed: (soundtrack.seed ?? 1) + (project.config.sfxVariation ?? 0) * 7919, sfxCues: t.shots.filter((s) => s.transitionOut && s.cutAt > 1.5).map((s, i) => ({ t: Math.max(0, s.cutAt - (s.transitionOut!.type === 'cut' ? 0 : 0.18)), kind: s.transitionOut!.type === 'cut' ? 'click' as const : pickKinds.length ? pickKinds[i % pickKinds.length] : profile.transitionSfx })),
     grade: 'none', musicFile: soundtrack.file, cueGap: profile.id === 'social' ? 1.1 : 1.7 };
   const final = path.join(rdir, `final_${sha({ joinKey, spec, v: 3 })}.mp4`);
   if (fs.existsSync(final)) { o.stage('audio', { status: 'done', detail: 'reused the previous mix', progress: 100 }); return { file: final, seconds: t.total, applied: [...applied, `soundtrack: ${soundtrack.label}`], skipped, cached: { shots: cachedShots, join: hadJoin } }; }

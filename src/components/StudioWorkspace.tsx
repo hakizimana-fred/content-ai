@@ -9,6 +9,7 @@ import type { Identity, IdentityInput } from '@/lib/studio/identity';
 import type { LibraryItem } from '@/lib/studio/library';
 import { BrandPanel } from '@/components/BrandPanel';
 import { SoundStudio } from '@/components/sound/SoundStudio';
+import { DurationPicker } from '@/components/sound/DurationPicker';
 import { usePlayer } from '@/components/sound/player';
 
 export type SoundPick = { mood: string; intensity: string; seed: number; overrides: Record<string, unknown> };
@@ -27,10 +28,11 @@ const json = (method: string, body: unknown): RequestInit => ({ method, headers:
 const ErrorBox: React.FC<{ msg: string | null }> = ({ msg }) => msg ? <div className="flex gap-2 items-start rounded-xl border border-rose-400/30 bg-rose-400/[0.07] px-3 py-2 text-xs text-rose-100"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />{msg}</div> : null;
 
 // ============================== Sonic Studio ==============================
-const SonicTab: React.FC<{ onUseSound?: (p: SoundPick) => void; hasVideo: boolean }> = ({ onUseSound, hasVideo }) => {
+const MOOD_TO_STYLE: Record<string, string> = { cinematic: 'cinematic', corporate: 'corporate', luxury: 'luxury', documentary: 'ambient', suspense: 'dramatic', inspirational: 'inspirational', electronic: 'electronic', african_fusion: 'african_fusion', minimal: 'minimal', technology: 'experimental', comedy: 'electronic', emotional: 'luxury', advertising: 'inspirational', news_editorial: 'minimal' };
+const SonicTab: React.FC<{ onUseSound?: (p: SoundPick) => void; hasVideo: boolean; videoSeconds?: number }> = ({ onUseSound, hasVideo, videoSeconds }) => {
   const [meta, setMeta] = useState<{ categories: { id: string; label: string; description: string }[]; sfx: { id: string; label: string }[]; limits: { maxSeconds: number; maxVariations: number }; tier: string; library: LibraryItem[] } | null>(null);
-  const [prompt, setPrompt] = useState(''); const [mood, setMood] = useState('cinematic'); const [intensity, setIntensity] = useState('medium');
-  const [seconds, setSeconds] = useState(30); const [variations, setVariations] = useState(2);
+  const [prompt, setPrompt] = useState(''); const [moods, setMoods] = useState<string[]>(['cinematic']); const [intensity, setIntensity] = useState('medium');
+  const [seconds, setSeconds] = useState(30); const [variations, setVariations] = useState(2); const [introPad, setIntroPad] = useState(0); const [outroPad, setOutroPad] = useState(0);
   const [busy, setBusy] = useState<string | null>(null); const [err, setErr] = useState<string | null>(null); const [interp, setInterp] = useState<string[]>([]);
   const player = usePlayer();
   const load = useCallback(() => api('/api/studio/sound').then(setMeta).catch((e) => setErr(e.message)), []);
@@ -40,6 +42,14 @@ const SonicTab: React.FC<{ onUseSound?: (p: SoundPick) => void; hasVideo: boolea
     setBusy(tag); setErr(null);
     try { const d = await api('/api/studio/sound', json('POST', body)); setInterp(d.interpreted ?? []); await load(); if (tag === 'sfx' || tag === 'sig') play(d.items[0].id); }
     catch (e) { setErr((e as Error).message); } finally { setBusy(null); }
+  };
+  const toggleMood = (id: string) => setMoods((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id].slice(-4)));
+  // Several chips are blended by the Sonic Engine into genuinely different variations (lead style, layers, tempo-checked); one chip keeps the classic single-mood render.
+  const pads = { ...(introPad ? { introPadSec: introPad } : {}), ...(outroPad ? { outroPadSec: outroPad } : {}) };
+  const generate = () => {
+    const styles = [...new Set(moods.map((m) => MOOD_TO_STYLE[m]).filter(Boolean))];
+    if (moods.length >= 2 && styles.length >= 1) return render({ styles, seconds, variations, ...pads, ...(prompt.trim() ? { prompt } : {}), ...(intensity !== 'medium' || !prompt.trim() ? { intensity } : {}) }, 'music');
+    return render(prompt.trim() ? { prompt, seconds, variations, ...pads, ...(intensity !== 'medium' ? { intensity } : {}) } : { mood: moods[0] ?? 'cinematic', intensity, seconds, variations, ...pads }, 'music');
   };
   const play = (id: string) => player.toggle({ id, title: meta?.library.find((x) => x.id === id)?.label ?? 'Sound', src: `/api/studio/sound/file?id=${id}` });
   const playing = player.playing ? player.track?.id ?? null : null;
@@ -55,15 +65,16 @@ const SonicTab: React.FC<{ onUseSound?: (p: SoundPick) => void; hasVideo: boolea
           <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={3} maxLength={500} placeholder="e.g. premium corporate soundtrack with deep bass, elegant piano and a gradual build-up"
             className="w-full rounded-xl bg-zinc-950/60 border border-white/10 focus:border-violet-400/60 outline-none p-3 text-sm text-zinc-100 placeholder:text-zinc-500 resize-none" />
           <div className="flex flex-wrap gap-1.5 mt-3">
-            {meta.categories.map((c) => <button key={c.id} onClick={() => setMood(c.id)} title={c.description} className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${mood === c.id && !prompt.trim() ? 'bg-violet-500/25 border-violet-400/60 text-white' : 'border-white/10 text-zinc-400 hover:text-white'}`}>{c.label}</button>)}
+            {meta.categories.map((c) => <button key={c.id} type="button" aria-pressed={moods.includes(c.id)} onClick={() => toggleMood(c.id)} title={c.description} className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${moods.includes(c.id) ? 'bg-violet-500/25 border-violet-400/60 text-white' : 'border-white/10 text-zinc-400 hover:text-white'}`}>{c.label}</button>)}
           </div>
-          <div className="grid grid-cols-3 gap-3 mt-3">
+          <p className="text-[11px] text-zinc-500 mt-1.5">{moods.length >= 2 ? `Blending ${moods.length} styles: the engine picks a lead, balances the layers and makes each variation a different character.` : 'Pick one style, or select up to 4 to blend them into one soundtrack.'}</p>
+          <div className="mt-3"><DurationPicker value={{ seconds, introPadSec: introPad, outroPadSec: outroPad }} max={meta.limits.maxSeconds} videoSeconds={videoSeconds} disabled={!!busy} onChange={(v) => { setSeconds(v.seconds); setIntroPad(v.introPadSec); setOutroPad(v.outroPadSec); }} /></div>
+          <div className="grid grid-cols-2 gap-3 mt-3">
             <Select label="Intensity" value={intensity} onChange={setIntensity}>{['low', 'medium', 'high'].map((i) => <option key={i}>{i}</option>)}</Select>
-            <Slider label="Length" value={seconds} min={5} max={meta.limits.maxSeconds} onChange={setSeconds} format={(v) => `${v}s`} />
             <Slider label="Variations" value={variations} min={1} max={meta.limits.maxVariations} onChange={setVariations} />
           </div>
-          <button disabled={!!busy} onClick={() => render(prompt.trim() ? { prompt, seconds, variations, ...(intensity !== 'medium' ? { intensity } : {}) } : { mood, intensity, seconds, variations }, 'music')} className={`${primary} mt-3 w-full flex items-center justify-center gap-2`}>
-            {busy === 'music' ? <><Loader2 className="w-4 h-4 animate-spin" />Rendering… (about {Math.max(2, Math.round(seconds * variations / 8))}s)</> : <><Music className="w-4 h-4" />Generate {variations > 1 ? `${variations} variations` : 'soundtrack'}</>}
+          <button disabled={!!busy || (!moods.length && !prompt.trim())} onClick={generate} className={`${primary} mt-3 w-full flex items-center justify-center gap-2`}>
+            {busy === 'music' ? <><Loader2 className="w-4 h-4 animate-spin" />Rendering… (about {Math.max(2, Math.round(seconds * variations / 6))}s)</> : <><Music className="w-4 h-4" />Generate {variations > 1 ? `${variations} variations` : 'soundtrack'}</>}
           </button>
           {interp.length > 0 && <p className="text-[11px] text-zinc-400 mt-2">Understood: {interp.join(' · ')}</p>}
         </div>
@@ -286,7 +297,7 @@ const ImportForm: React.FC<{ onDone: () => void; cats: { id: string; label: stri
   );
 };
 
-export const StudioWorkspace: React.FC<{ onUseSound?: (p: SoundPick) => void; hasVideo: boolean }> = ({ onUseSound, hasVideo }) => {
+export const StudioWorkspace: React.FC<{ onUseSound?: (p: SoundPick) => void; hasVideo: boolean; videoSeconds?: number }> = ({ onUseSound, hasVideo, videoSeconds }) => {
   const [tab, setTab] = useState<Tab>('sonic');
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'sonic', label: 'Sonic Studio', icon: <Music className="w-3.5 h-3.5" /> },
@@ -303,8 +314,8 @@ export const StudioWorkspace: React.FC<{ onUseSound?: (p: SoundPick) => void; ha
           {tabs.map((t) => <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)} className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] font-medium transition-all ${tab === t.id ? 'bg-white text-zinc-950' : 'text-zinc-400 hover:text-white'}`}>{t.icon}{t.label}</button>)}
         </div>
       </div>
-      {tab === 'sonic' && <SonicTab onUseSound={onUseSound} hasVideo={hasVideo} />}
-      {tab === 'library' && <SoundStudio onUseSound={onUseSound} hasVideo={hasVideo} />}
+      {tab === 'sonic' && <SonicTab onUseSound={onUseSound} hasVideo={hasVideo} videoSeconds={videoSeconds} />}
+      {tab === 'library' && <SoundStudio onUseSound={onUseSound} hasVideo={hasVideo} videoSeconds={videoSeconds} />}
       {tab === 'identities' && <IdentitiesTab />}
       {tab === 'models' && <ModelsTab />}
     </div>

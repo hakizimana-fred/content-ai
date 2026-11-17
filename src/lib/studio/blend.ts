@@ -53,12 +53,21 @@ export function blendStyles(input: StyleId[], character: Character, seedIndex = 
     // tempo: only combine when the tempos are musically related, otherwise the leader's tempo stands
     if (tempoCompatible(lead.bpm, o.bpm)) { const r = o.bpm / lead.bpm; if (Math.abs(r - 1) < 0.22) rc.bpm = Math.round(rc.bpm * (1 - 0.3 * f) + o.bpm * 0.3 * f); }
     else notes.push(`${STYLE_LABEL[s]} runs at ${o.bpm} BPM, which does not sit with ${Math.round(lead.bpm)} BPM, so its tempo is not used.`);
+    if (tempoCompatible(lead.bpm, o.bpm) && f === 1) {                      // related tempos still matter: a double-time partner busies the hats, a half-time partner thins the groove
+      const ratio = o.bpm / lead.bpm;
+      if (Math.abs(ratio - 2) < 0.2 && rc.feel !== 'half') { rc.feel = 'double'; notes.push(`${STYLE_LABEL[s]} is double-time against ${STYLE_LABEL[leader]}: the climax uses a busier rhythm.`); }
+      else if (Math.abs(ratio - 0.5) < 0.1 && rc.feel !== 'double') { rc.feel = 'half'; notes.push(`${STYLE_LABEL[s]} is half-time against ${STYLE_LABEL[leader]}: the groove stays spacious.`); }
+    }
     if (roles.includes('atmosphere')) { rc.reverb = Math.max(rc.reverb, o.reverb * (0.7 + 0.3 * f)); rc.texture = Math.max(rc.texture, o.texture * f); if (o.pad.level >= rc.pad.level) rc.pad = { ...rc.pad, wave: o.pad.wave, detune: Math.round((rc.pad.detune + o.pad.detune) / 2) }; got.push('pad character, space and texture'); }
     if (roles.includes('tension')) { rc.bassLevel = Math.max(rc.bassLevel, o.bassLevel * f); if (rc.bass === 'none') rc.bass = 'sub'; if (o.perc === 'cinematic' && rc.perc !== 'four' && rc.perc !== 'afro') { rc.perc = 'cinematic'; rc.percLevel = Math.max(rc.percLevel, o.percLevel * f); } rc.build = true; got.push('low-end weight and tension'); }
     if (roles.includes('instrument') && o.piano) { rc.piano = true; rc.pianoLevel = Math.max(rc.pianoLevel, o.pianoLevel * f); got.push('piano'); }
     if (roles.includes('groove') && o.bass !== 'none') { if (rc.bass === 'none' || (rc.bass === 'sub' && f === 1)) rc.bass = o.bass; rc.bassLevel = Math.max(rc.bassLevel, o.bassLevel * f); if (rc.perc === 'none' || rc.perc === 'minimal') { rc.perc = o.perc; rc.percLevel = Math.max(rc.percLevel, o.percLevel * f); } if (!rc.arp && o.arp) rc.arp = { ...o.arp, level: o.arp.level * f }; got.push('rhythmic structure'); }
     if (roles.includes('colour') && o.arp) { rc.arp = { div: o.arp.div, wave: o.arp.wave, level: Math.max(rc.arp?.level ?? 0, o.arp.level * f) }; if (o.perc === 'afro' && f === 1) rc.perc = 'afro', rc.percLevel = Math.max(rc.percLevel, o.percLevel); got.push('arpeggio colour'); }
     if (roles.includes('harmony') && SCALE_FAMILY[o.scale] === SCALE_FAMILY[rc.scale]) { rc.pad = { ...rc.pad, cutoff: Math.round((rc.pad.cutoff + o.pad.cutoff) / 2) }; got.push('pad brightness'); }
+    // key and mode: every blend stays in the leader's key. A style in a compatible mode lends its chord progression to the Variation section; a clashing mode only colours the tone.
+    if (SCALE_FAMILY[o.scale] === SCALE_FAMILY[rc.scale] || SCALE_FAMILY[o.scale] === 'modal' || SCALE_FAMILY[rc.scale] === 'modal') {
+      if (!rc.altProg && o.prog.length === rc.prog.length && o.prog.join() !== rc.prog.join() && f === 1) { rc.altProg = [...o.prog]; got.push('chord progression for the variation section'); }
+    } else notes.push(`${STYLE_LABEL[s]} is in a ${SCALE_FAMILY[o.scale]} mode and ${STYLE_LABEL[leader]} in a ${SCALE_FAMILY[rc.scale]} one, so the key and harmony of ${STYLE_LABEL[leader]} are kept and ${STYLE_LABEL[s]} only colours the sound.`);
     contributions[s] = (influenceOnly.has(s) ? 'influence at reduced level: ' : '') + (got.length ? got.join(', ') : 'tone only (nothing in its character fits this arrangement)');
   }
 
@@ -68,6 +77,9 @@ export function blendStyles(input: StyleId[], character: Character, seedIndex = 
   else if (character === 'elegant') { rc.piano = true; rc.pianoLevel = Math.max(rc.pianoLevel, 0.85); rc.pad = { ...rc.pad, wave: 'tri', cutoff: Math.min(rc.pad.cutoff, 1900) }; rc.arp = null; rc.perc = rc.perc === 'none' ? 'none' : 'minimal'; rc.percLevel = sub(rc.percLevel, 0.5); rc.bass = rc.bass === 'none' ? 'none' : 'sub'; rc.bassLevel = Math.min(rc.bassLevel, 0.5); rc.bpm = Math.round(Math.min(rc.bpm, 88)); rc.build = false; rc.arc = 'rise'; rc.layerIn = { piano: 0, perc: 0.4, bass: 0.15 }; rc.outroSec = 4; }
   else if (character === 'modern') { rc.bpm = Math.round(Math.max(rc.bpm, 100)); if (rc.bass === 'none' || rc.bass === 'sub') rc.bass = 'pulse'; rc.bassLevel = Math.max(rc.bassLevel, 0.5); if (rc.perc === 'none' || rc.perc === 'cinematic') rc.perc = 'soft'; rc.percLevel = Math.max(rc.percLevel, 0.55); if (!rc.arp) rc.arp = { div: 2, wave: 'tri', level: 0.28 }; rc.build = true; rc.arc = 'rise'; rc.layerIn = { bass: 0.08, perc: 0.1, arp: 0.25, piano: 0.3 }; rc.outroSec = 2.5; }
   else { rc.bass = rc.bass === 'none' ? 'none' : 'sub'; rc.bassLevel = Math.min(rc.bassLevel, 0.3); rc.perc = rc.perc === 'none' ? 'none' : 'minimal'; rc.percLevel = Math.min(rc.percLevel, 0.3); rc.arp = null; rc.piano = true; rc.pianoLevel = Math.max(rc.pianoLevel, 0.5); rc.pad = { ...rc.pad, level: rc.pad.level * 0.7 }; rc.reverb = Math.max(rc.reverb, 0.65); rc.bpm = Math.round(Math.min(rc.bpm, 84)); rc.build = false; rc.arc = 'steady'; rc.layerIn = { piano: 0.05, perc: 0.5, bass: 0.3 }; rc.outroSec = 4; }
+
+  // the character also decides how a long piece moves: dramatic builds longest and lands hardest, elegant breathes, modern gets going early, minimal stays level
+  rc.form = character;
 
   // 4. frequency overlap: pad, piano and bass compete for the low-mids. Carve room instead of stacking them at full level.
   if (rc.piano && rc.pianoLevel > 0.5 && rc.pad.level > 0.4) { rc.pad = { ...rc.pad, level: rc.pad.level * 0.8, cutoff: Math.min(rc.pad.cutoff, 1700) }; notes.push('Pad level and brightness were reduced so the piano and pad do not mask each other.'); }

@@ -8,7 +8,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tempo-'));
 const cases: [Exclude<Mood, 'none'>, number][] = [['african_fusion', 3], ['electronic', 2], ['corporate', 4], ['cinematic', 1], ['comedy', 5]];
 let worst = 0;
 for (const [mood, seed] of cases) {
-  const f = path.join(dir, `${mood}.wav`); fs.writeFileSync(f, encodeWav(await renderMusic({ mood, intensity: 'medium', seconds: 30, seed })));
+  const f = path.join(dir, `${mood}.wav`); fs.writeFileSync(f, encodeWav(await renderMusic({ mood, intensity: 'medium', seconds: 30, seed, structure: false })));
   const truth = musicBpm(mood, seed), r = await detectTempo(f, 30);
   const err = Math.abs((r.bpm ?? 0) - truth) / truth, beat = 60 / truth; const signed = ((r.beatOffset + beat / 2) % beat) - beat / 2; console.log("   signed phase ms", (signed * 1000).toFixed(0));
   const off = Math.min(r.beatOffset % beat, beat - (r.beatOffset % beat));
